@@ -1,5 +1,7 @@
+import streamlit as st
+
 def main():
-    print("Hello from density-segmentation-gui!")
+    st.write("# Density Segmentation GUI!")
 
 
 if __name__ == "__main__":
