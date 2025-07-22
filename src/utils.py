@@ -103,5 +103,5 @@ if __name__ == "__main__":
     # It was necessary to better presentation of the image in the canvas
     result, mask = MaskOperations.create_mask(image, points, reduction_scale=0.3256)
     output_path = os.path.join(os.getcwd(), 'output', image_name.split('.')[0])
-    MaskOperations.save_mask(mask, affine, file_path=output_path, file_name="mask.png")
+    MaskOperations.save_mask(mask, affine, file_path=output_path, file_name="mask.png", points=points, scale=0.3256)
     print("Mask created and saved successfully.")   
