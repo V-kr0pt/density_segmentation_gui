@@ -4,10 +4,20 @@ from PIL import Image
 from streamlit_drawable_canvas import st_canvas
 from utils import ImageLoader, MaskOperations
 
-def file_selector(folder_path=os.path.join(os.getcwd(), 'media')):
+def file_selector(folder_path=os.path.join(os.getcwd(), 'media'), only_not_done=True):
+        already_done_files = os.listdir(os.path.join(os.getcwd(), 'output'))
         filenames = [f for f in os.listdir(folder_path) if f.endswith('.nii')]
+
+        if only_not_done:
+            filenames = [f for f in filenames if f.split('.')[0] not in already_done_files]
+        
         selected_filename = st.selectbox('Select a file', filenames)
-        return selected_filename, os.path.join(folder_path, selected_filename)
+
+        if len(filenames) == 0:
+            st.warning("No files available to select.")
+            return None, None
+        else:
+            return selected_filename, os.path.join(folder_path, selected_filename)
 
 def main():
     st.set_page_config(layout="wide")
@@ -19,7 +29,14 @@ def main():
         st.success("Selection cleared.")
 
     # Select file and load image
-    selected_filename, file_path = file_selector()
+    # show a option to select if only not done files should be shown
+    input_folder = os.path.join(os.getcwd(), 'media')
+    only_not_done = st.checkbox("Show only not done files")
+    selected_filename, file_path = file_selector(folder_path=input_folder, only_not_done=only_not_done)
+    if selected_filename is None:
+        st.warning(f"Please add a new file in {input_folder} to continue.")
+        return
+
     image, affine = ImageLoader.load_image(file_path)
 
     if "affine" not in st.session_state:
