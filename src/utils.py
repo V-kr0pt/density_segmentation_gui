@@ -17,12 +17,14 @@ class ImageLoader:
     @staticmethod
     def load_nii_central_slice_lazy(file_path, dtype=np.float32):
         img = nib.load(file_path)
+
         affine = img.affine
         data = img.dataobj  # acesso preguiçoso
         data = ImageLoader.rearrange_dimensions(data)
-        idx = data.shape[0] // 2
+        nb_of_slices = data.shape[0]
+        idx = nb_of_slices // 2
         slice_ = np.asarray(data[idx], dtype=dtype)
-        return slice_, affine
+        return slice_, affine, nb_of_slices
 
     @staticmethod
     def normalize_image(img):
@@ -32,10 +34,10 @@ class ImageLoader:
 
     @staticmethod
     def load_image(file_path):
-        slice_image, affine = ImageLoader.load_nii_central_slice_lazy(file_path)
+        slice_image, affine, nb_of_slices = ImageLoader.load_nii_central_slice_lazy(file_path)
         slice_image = np.rot90(slice_image)
         norm_image = ImageLoader.normalize_image(slice_image)
-        return cv2.cvtColor(norm_image, cv2.COLOR_GRAY2RGB), affine
+        return cv2.cvtColor(norm_image, cv2.COLOR_GRAY2RGB), affine, nb_of_slices
 
 class MaskOperations:
     def __init__(self):
@@ -59,14 +61,17 @@ class MaskOperations:
         return result, mask
 
     @staticmethod
-    def save_png_mask(mask, file_path, file_name="mask.png"):
+    def save_png_mask(mask, file_path, file_name="dense.png"):
         os.makedirs(file_path, exist_ok=True)
         cv2.imwrite(os.path.join(file_path, file_name), mask)
 
     @staticmethod
-    def save_nii_mask(mask, affine, file_path, file_name="mask.nii"):
-        
-        mask_nii = nib.Nifti1Image(mask, affine)
+    def save_nii_mask(mask, affine, nb_of_slices, file_path, file_name="dense.nii"):
+        # transform in a mask of 1's
+        mask_3d = np.where(mask > 0, 1, 0).astype(np.uint8)
+        mask_3d = np.repeat(mask_3d[np.newaxis, :, :], nb_of_slices, axis=0)
+        mask_3d = np.transpose(mask_3d, (0, 2, 1))  # Ensure shape is (Y, X, Z)
+        mask_nii = nib.Nifti1Image(mask_3d, affine)
         nib.save(mask_nii, os.path.join(file_path, file_name))
 
     @staticmethod
@@ -78,10 +83,9 @@ class MaskOperations:
             json.dump(json_data, f)
 
     @staticmethod
-    def save_mask(mask, affine, file_path, file_name="mask.png", points=None, scale=1.0):
+    def save_mask(mask, affine, nb_of_slices, file_path, file_name="dense.nii", points=None, scale=1.0):
         os.makedirs(file_path, exist_ok=True)
-        MaskOperations.save_png_mask(mask, file_path, file_name)
-        MaskOperations.save_nii_mask(mask, affine, file_path, file_name.replace('.png', '.nii'))
+        MaskOperations.save_nii_mask(mask, affine, nb_of_slices, file_path, file_name)
         assert points is not None, "Points must be provided to save mask JSON."
         MaskOperations.save_mask_json(points, scale, file_path)
     
@@ -91,7 +95,7 @@ if __name__ == "__main__":
     file_path = os.path.join("media", image_name)
 
     # load the image and the affine transformation
-    image, affine = ImageLoader.load_image(file_path)
+    image, affine, nb_of_slices = ImageLoader.load_image(file_path)
     
     # Normally the points would be obtained from streamlit canvas
     # Here we use a hardcoded example for demonstration
@@ -103,5 +107,6 @@ if __name__ == "__main__":
     # It was necessary to better presentation of the image in the canvas
     result, mask = MaskOperations.create_mask(image, points, reduction_scale=0.3256)
     output_path = os.path.join(os.getcwd(), 'output', image_name.split('.')[0])
-    MaskOperations.save_mask(mask, affine, file_path=output_path, file_name="mask.png", points=points, scale=0.3256)
+    MaskOperations.save_mask(mask, affine, nb_of_slices, file_path=output_path,
+                              points=points, scale=0.3256)
     print("Mask created and saved successfully.")   
