@@ -1,0 +1,7 @@
+.vscode
+*.zip
+*.nii
+__pycache__
+output/*
+DBT-P00125
+*.ipynb
