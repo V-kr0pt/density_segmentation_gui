@@ -5,7 +5,7 @@ from streamlit_drawable_canvas import st_canvas
 from utils import ImageLoader, MaskOperations
 
 def file_selector(folder_path=os.path.join(os.getcwd(), 'media')):
-        filenames = os.listdir(folder_path)
+        filenames = [f for f in os.listdir(folder_path) if f.endswith('.nii')]
         selected_filename = st.selectbox('Select a file', filenames)
         return selected_filename, os.path.join(folder_path, selected_filename)
 
