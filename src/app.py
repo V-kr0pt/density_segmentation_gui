@@ -37,7 +37,7 @@ def main():
         st.warning(f"Please add a new .nii file in {input_folder} to continue.")
         return
 
-    image, affine = ImageLoader.load_image(file_path)
+    image, affine, nb_of_slices = ImageLoader.load_image(file_path)
 
     if "affine" not in st.session_state:
         st.session_state["affine"] = affine
@@ -116,7 +116,8 @@ def main():
             st.write(f"Saving mask to: {st.session_state.output_path}")
 
             # We have to create the local variables to avoid issues with Streamlit's session state
-            MaskOperations.save_mask(st.session_state.mask, affine=st.session_state.affine, 
+            MaskOperations.save_mask(st.session_state.mask, affine=st.session_state.affine,
+                                        nb_of_slices=nb_of_slices, 
                                         file_path=st.session_state.output_path,
                                         points=st.session_state.points, 
                                         scale=st.session_state.scale)
