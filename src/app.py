@@ -34,7 +34,7 @@ def main():
     only_not_done = st.checkbox("Show only not done files")
     selected_filename, file_path = file_selector(folder_path=input_folder, only_not_done=only_not_done)
     if selected_filename is None:
-        st.warning(f"Please add a new file in {input_folder} to continue.")
+        st.warning(f"Please add a new .nii file in {input_folder} to continue.")
         return
 
     image, affine = ImageLoader.load_image(file_path)
