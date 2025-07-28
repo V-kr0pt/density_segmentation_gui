@@ -43,7 +43,6 @@ def process_step():
         
         nifti_path = MaskOperations.create_mask_nifti(save_dir, original_affine)
         st.success(f"Processing completed! NIfTI file saved at: {nifti_path}")
-        st.balloons()
     
     if st.button("↩️ Back to Threshold Adjustment"):
         st.session_state["current_step"] = "threshold"
