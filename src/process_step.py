@@ -29,6 +29,11 @@ def process_step():
         
         original_affine = nib.load(original_image_path).affine
         
+        # if the save_dir already exists, remove everything inside it
+        if os.path.exists(save_dir):
+            for f in os.listdir(save_dir):
+                os.remove(os.path.join(save_dir, f))
+
         for slice_index in range(num_slices):
             status_text.text(f"Processing slice {slice_index+1}/{num_slices}")
             progress_bar.progress((slice_index+1)/num_slices)
