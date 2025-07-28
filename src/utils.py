@@ -13,7 +13,10 @@ class ImageOperations:
 
     @staticmethod
     def rearrange_dimensions(data):
-        return data
+        if data.shape[0] > data.shape[-1]:
+            return np.transpose(data, (2, 0, 1))
+        else:
+            return data
 
     @staticmethod
     def load_nii_central_slice_lazy(file_path, dtype=np.float32):
@@ -21,22 +24,20 @@ class ImageOperations:
 
         affine = img.affine
         data = img.dataobj  # acesso preguiçoso
-        data = ImageOperations.rearrange_dimensions(data)
         nb_of_slices = data.shape[0]
         idx = nb_of_slices // 2
         slice_ = np.asarray(data[idx], dtype=dtype)
         return slice_, affine, nb_of_slices
 
     @staticmethod
-    def load_nii_central_slice(file_path, dtype=np.float32, rotate=True):
+    def load_nii_central_slice(file_path, dtype=np.float32, flip=False):
         nii = nib.load(file_path).get_fdata()
-        nii = ImageOperations.rearrange_dimensions(nii)
         idx = nii.shape[0] // 2
         central_slice = nii[idx].astype(dtype)
-        if rotate:
-            return np.rot90(central_slice)
-        else:
-            return central_slice
+        central_slice = np.rot90(central_slice)  # Rotate the slice for vertical orientation
+        if flip:
+            central_slice = np.flip(central_slice, axis=0)
+        return central_slice
 
     @staticmethod
     def normalize_image(img):
@@ -52,7 +53,7 @@ class ImageOperations:
         return cv2.cvtColor(norm_image, cv2.COLOR_GRAY2RGB), affine, nb_of_slices
 
     @staticmethod
-    def load_nii_slice(file_path, slice_index, dtype=np.float32):
+    def load_nii_slice(file_path, slice_index, dtype=np.float32, flip=False):
         nii_obj = nib.load(file_path)
         nii_data = nii_obj.get_fdata()
         slice_data = nii_data[slice_index, :, :]
@@ -97,13 +98,15 @@ class MaskOperations:
     #GIVING AN ERROR IN THE END OF THE FILE PROCESSING
     @staticmethod 
     def create_mask_nifti(folder_path, original_affine):
+        mask_path = os.path.join(folder_path, 'mask.nii')
         images = [np.array(Image.open(os.path.join(folder_path, f)).convert('L')) 
                   for f in sorted(os.listdir(folder_path), 
                   key=lambda x: int(x.split('_')[1])) if f.endswith('.png')]
         volume = np.stack(images, axis=0)
+        #volume = np.transpose(volume, (0, 2, 1))  # Transpose to match NIfTI format
         nib.save(nib.Nifti1Image(volume, original_affine), 
-                 os.path.join(folder_path, 'mask.nii'))
-        return os.path.join(folder_path, 'mask.nii')
+                 mask_path)
+        return mask_path
 
     #@staticmethod
     #def create_mask_nifti(folder_path, original_affine):
@@ -145,11 +148,13 @@ class MaskOperations:
         rotated_mask = np.rot90(mask)
         mask_3d = np.where(rotated_mask > 0, 1, 0).astype(np.uint8)
         mask_3d = np.repeat(mask_3d[np.newaxis, :, :], nb_of_slices, axis=0)
+        mask_3d = np.transpose(mask_3d, (0, 2, 1))
         mask_nii = nib.Nifti1Image(mask_3d, affine)
         nib.save(mask_nii, os.path.join(file_path, file_name))
         if image is not None:
             rotated_image = np.rot90(image)
             image_3d = np.repeat(rotated_image[np.newaxis, :, :], nb_of_slices, axis=0)
+            image_3d = ImageOperations.rearrange_dimensions(image_3d)
             image_nii = nib.Nifti1Image(image_3d, affine)
             nib.save(image_nii, os.path.join(file_path, image_file_name))
 

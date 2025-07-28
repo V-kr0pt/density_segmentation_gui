@@ -16,8 +16,11 @@ def threshold_step():
     original_image_path = st.session_state["original_image_path"]
     
     try:
-        img = ImageOperations.load_nii_central_slice(original_image_path, rotate=True)
-        msk = ImageOperations.load_nii_central_slice(mask_path, rotate=False)
+        img = ImageOperations.load_nii_central_slice(original_image_path)
+        msk = ImageOperations.load_nii_central_slice(mask_path, flip=True)
+        #img = np.rot90(img)  # Rotate the image for correct orientation
+        #msk = np.rot90(msk)  # Rotate the mask for correct orientation
+        #msk = np.flip(msk, axis=0)  # Flip the mask upside down
     except Exception as e:
         st.error(f"Error loading images: {str(e)}")
         return
