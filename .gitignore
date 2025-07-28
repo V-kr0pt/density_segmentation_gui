@@ -5,3 +5,4 @@ __pycache__
 output/*
 DBT-P00125
 *.ipynb
+venv

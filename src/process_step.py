@@ -23,7 +23,7 @@ def process_step():
         
         num_slices = nib.load(original_image_path).shape[0]
         middle_slice_index = num_slices // 2
-        middle_image_slice = ImageOperations.load_nii_slice(original_image_path, middle_slice_index)
+        middle_image_slice = np.rot90(ImageOperations.load_nii_slice(original_image_path, middle_slice_index))
         middle_mask_slice = ImageOperations.load_nii_slice(mask_path, middle_slice_index)
         target_area = MaskOperations.measure_mask_area(ThresholdOperations.threshold_image(middle_image_slice, middle_mask_slice, T))
         
@@ -33,12 +33,10 @@ def process_step():
             status_text.text(f"Processing slice {slice_index+1}/{num_slices}")
             progress_bar.progress((slice_index+1)/num_slices)
             
-            image_slice = ImageOperations.load_nii_slice(original_image_path, slice_index)
+            image_slice = np.rot90(ImageOperations.load_nii_slice(original_image_path, slice_index))
             mask_slice = ImageOperations.load_nii_slice(mask_path, slice_index)
             adjusted_threshold, thresholded_image = ThresholdOperations.adjust_threshold(image_slice, mask_slice, target_area, slice_index)
-            
-            rotated_thresholded_image = np.rot90(thresholded_image)
-            binary_image = np.where(rotated_thresholded_image > 0, 255, 0).astype(np.uint8)
+            binary_image = np.where(thresholded_image > 0, 255, 0).astype(np.uint8)
             filename = f'slice_{slice_index}_threshold_{adjusted_threshold:.4f}.png'
             filepath = os.path.join(save_dir, filename)
             Image.fromarray(binary_image, mode='L').save(filepath)

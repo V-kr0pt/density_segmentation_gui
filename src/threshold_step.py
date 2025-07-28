@@ -16,11 +16,18 @@ def threshold_step():
     original_image_path = st.session_state["original_image_path"]
     
     try:
-        img = ImageOperations.load_nii_central_slice(original_image_path)
-        msk = ImageOperations.load_nii_central_slice(mask_path)
+        img = ImageOperations.load_nii_central_slice(original_image_path, rotate=True)
+        msk = ImageOperations.load_nii_central_slice(mask_path, rotate=False)
     except Exception as e:
         st.error(f"Error loading images: {str(e)}")
         return
+    # Display central slice of original image (already rotated)
+    st.subheader("Central Slice: Original Image")
+    st.image(img, caption="Original Image Central Slice", use_column_width=True, clamp=True)
+
+    # Display central slice of mask
+    st.subheader("Central Slice: Mask")
+    st.image(msk, caption="Mask Central Slice", use_column_width=True, clamp=True)
     
     threshold = st.slider(
         "Select threshold value",
@@ -38,9 +45,6 @@ def threshold_step():
         save_dir = os.path.join(st.session_state["output_path"], 'dense_mask')
         os.makedirs(save_dir, exist_ok=True)
         
-        # Save central slice preview
-        preview_path = os.path.join(save_dir, 'preview.png')
-        plt.imsave(preview_path, np.rot90(ThresholdOperations.threshold_image(img, msk, threshold), k=1), cmap='gray')
         
         # Agora podemos salvar o valor sem conflito
         st.session_state["final_threshold"] = threshold

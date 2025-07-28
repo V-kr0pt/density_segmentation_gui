@@ -13,8 +13,6 @@ class ImageOperations:
 
     @staticmethod
     def rearrange_dimensions(data):
-        if data.shape[0] > data.shape[-1]:
-            return np.transpose(data, (2, 0, 1))
         return data
 
     @staticmethod
@@ -30,11 +28,15 @@ class ImageOperations:
         return slice_, affine, nb_of_slices
 
     @staticmethod
-    def load_nii_central_slice(file_path, dtype=np.float32):
+    def load_nii_central_slice(file_path, dtype=np.float32, rotate=True):
         nii = nib.load(file_path).get_fdata()
         nii = ImageOperations.rearrange_dimensions(nii)
         idx = nii.shape[0] // 2
-        return nii[idx].astype(dtype)
+        central_slice = nii[idx].astype(dtype)
+        if rotate:
+            return np.rot90(central_slice)
+        else:
+            return central_slice
 
     @staticmethod
     def normalize_image(img):
@@ -46,7 +48,6 @@ class ImageOperations:
     @staticmethod
     def load_image(file_path):
         slice_image, affine, nb_of_slices = ImageOperations.load_nii_central_slice_lazy(file_path)
-        slice_image = np.rot90(slice_image)
         norm_image = ImageOperations.normalize_image(slice_image)
         return cv2.cvtColor(norm_image, cv2.COLOR_GRAY2RGB), affine, nb_of_slices
 
@@ -62,19 +63,14 @@ class ImageOperations:
     @staticmethod
     def display_thresholded_slice(img, mask, threshold):
         bin_mask = ThresholdOperations.threshold_image(img, mask, threshold)
-
-        rotated_img = np.rot90(img, k=1)
-        rotated_mask = np.rot90(bin_mask, k=1)
-
         fig, ax = plt.subplots(figsize=(8, 8))
-        ax.imshow(rotated_img, cmap='gray')
-        ax.imshow(rotated_mask, cmap='jet', alpha=0.2)
+        ax.imshow(img, cmap='gray')
+        ax.imshow(bin_mask, cmap='jet', alpha=0.2)
         ax.text(0.5, 0.05, f'Threshold: {threshold:.2f}',
                ha='center', va='center',
                transform=ax.transAxes,
                color='white', fontsize=16)
         ax.axis('off')
-
         return fig
 
 class MaskOperations:
@@ -105,8 +101,7 @@ class MaskOperations:
                   for f in sorted(os.listdir(folder_path), 
                   key=lambda x: int(x.split('_')[1])) if f.endswith('.png')]
         volume = np.stack(images, axis=0)
-        transposed_flipped_volume = np.flip(np.transpose(volume, (0, 2, 1)), axis=2)
-        nib.save(nib.Nifti1Image(transposed_flipped_volume, original_affine), 
+        nib.save(nib.Nifti1Image(volume, original_affine), 
                  os.path.join(folder_path, 'mask.nii'))
         return os.path.join(folder_path, 'mask.nii')
 
@@ -135,16 +130,28 @@ class MaskOperations:
     @staticmethod
     def save_png_mask(mask, file_path, file_name="dense.png"):
         os.makedirs(file_path, exist_ok=True)
-        cv2.imwrite(os.path.join(file_path, file_name), mask)
+        rotated_mask = np.rot90(mask)
+        cv2.imwrite(os.path.join(file_path, file_name), rotated_mask)
 
     @staticmethod
-    def save_nii_mask(mask, affine, nb_of_slices, file_path, file_name="dense.nii"):
+    def save_png_image(image, file_path, file_name="dense_image.png"):
+        os.makedirs(file_path, exist_ok=True)
+        rotated_image = np.rot90(image)
+        cv2.imwrite(os.path.join(file_path, file_name), rotated_image)
+
+    @staticmethod
+    def save_nii_mask(mask, affine, nb_of_slices, file_path, file_name="dense.nii", image=None, image_file_name="dense_image.nii"):
         # transform in a mask of 1's
-        mask_3d = np.where(mask > 0, 1, 0).astype(np.uint8)
+        rotated_mask = np.rot90(mask)
+        mask_3d = np.where(rotated_mask > 0, 1, 0).astype(np.uint8)
         mask_3d = np.repeat(mask_3d[np.newaxis, :, :], nb_of_slices, axis=0)
-        mask_3d = np.transpose(mask_3d, (0, 2, 1))  # Ensure shape is (Y, X, Z)
         mask_nii = nib.Nifti1Image(mask_3d, affine)
         nib.save(mask_nii, os.path.join(file_path, file_name))
+        if image is not None:
+            rotated_image = np.rot90(image)
+            image_3d = np.repeat(rotated_image[np.newaxis, :, :], nb_of_slices, axis=0)
+            image_nii = nib.Nifti1Image(image_3d, affine)
+            nib.save(image_nii, os.path.join(file_path, image_file_name))
 
     @staticmethod
     def save_mask_json(points, scale, file_path):

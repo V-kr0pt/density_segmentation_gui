@@ -3,6 +3,7 @@ import streamlit as st
 from PIL import Image
 from utils import ImageOperations, MaskOperations
 from streamlit_drawable_canvas import st_canvas
+import numpy as np
 
 def file_selector(folder_path=os.path.join(os.getcwd(), 'media'), only_not_done=True):
         already_done_files = os.listdir(os.path.join(os.getcwd(), 'output'))
@@ -86,7 +87,7 @@ def draw_step():
         if len(st.session_state.points) >= 3:
             result, mask = MaskOperations.create_mask(image, st.session_state.points, reduction_scale=scale)
             st.session_state["mask"] = mask
-            st.session_state["result"] = result 
+            st.session_state["result"] = result
             st.session_state["output_path"] = os.path.join(os.getcwd(), 'output', selected_filename.split('.')[0])
             st.session_state["create_mask"] = False
             st.rerun()
@@ -102,13 +103,14 @@ def draw_step():
             st.image(st.session_state["result"], caption="Segmented Area", use_container_width=True)
         
         if st.button("✅ Save Mask and Proceed to Thresholding"):
+            # Save mask exactly as drawn, no rotation or transformation
             MaskOperations.save_mask(
-                st.session_state.mask, 
-                affine=st.session_state.affine,
-                nb_of_slices=st.session_state["nb_of_slices"], 
+                st.session_state["mask"],
+                affine=st.session_state["affine"],
+                nb_of_slices=st.session_state["nb_of_slices"],
                 file_path=st.session_state["output_path"],
-                points=st.session_state.points, 
-                scale=st.session_state.scale
+                points=st.session_state["points"],
+                scale=st.session_state["scale"]
             )
             st.session_state["current_step"] = "threshold"
             st.rerun()
