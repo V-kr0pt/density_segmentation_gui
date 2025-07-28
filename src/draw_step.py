@@ -52,21 +52,23 @@ def draw_step():
     
     pil_width = int(orig_width * scale)
     pil_height = int(orig_height * scale)
-    pil_image = Image.fromarray(image).resize((pil_width, pil_height))
+    pil_image = Image.fromarray(image).resize((pil_width, pil_height)).rotate(90, expand=True)
 
     if "points" not in st.session_state:
         st.session_state.points = []
     
     st.write("Draw a polygon on the image to segment:")
     
+    # Adjust canvas size for rotated image
+    rotated_width, rotated_height = pil_image.size
     canvas_result = st_canvas(
         fill_color="rgba(255, 0, 0, 0.3)",
         stroke_width=2,
         stroke_color="red",
         background_image=pil_image,
         update_streamlit=True,
-        height=pil_height,
-        width=pil_width,
+        height=rotated_height,
+        width=rotated_width,
         drawing_mode="polygon",
         key="canvas"
     )
@@ -75,7 +77,10 @@ def draw_step():
         objects = canvas_result.json_data["objects"]
         if len(objects) > 0:
             polygon = objects[-1]["path"]
-            points = [(int(p[1]), int(p[2])) for p in polygon if len(p) == 3]
+            # Transform points from rotated canvas back to original orientation
+            points_rotated = [(int(p[1]), int(p[2])) for p in polygon if len(p) == 3]
+            # For 90 degree rotation (counterclockwise), new_x = y, new_y = width - x
+            points = [(rotated_height - y, x) for x, y in points_rotated]
             st.session_state.points = points
 
     col1, col2 = st.columns(2)
