@@ -23,11 +23,11 @@ def threshold_step():
         return
     # Display central slice of original image (already rotated)
     st.subheader("Central Slice: Original Image")
-    st.image(img, caption="Original Image Central Slice", use_column_width=True, clamp=True)
+    st.image(img, caption="Original Image Central Slice", width=100, clamp=True)
 
     # Display central slice of mask
     st.subheader("Central Slice: Mask")
-    st.image(msk, caption="Mask Central Slice", use_column_width=True, clamp=True)
+    st.image(msk, caption="Mask Central Slice", width=100, clamp=True)
     
     threshold = st.slider(
         "Select threshold value",
@@ -38,8 +38,14 @@ def threshold_step():
         key="threshold_slider"
     )
     
+    import io
     fig = ThresholdOperations.display_thresholded_slice(img, msk, threshold)
-    st.pyplot(fig)
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
+    buf.seek(0)
+    cols = st.columns([1, 2, 1])
+    with cols[1]:
+        st.image(buf, caption="Thresholded Central Slice", width=400)
     
     if st.button("💾 Save Thresholded Mask"):
         save_dir = os.path.join(st.session_state["output_path"], 'dense_mask')
