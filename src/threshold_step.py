@@ -24,13 +24,6 @@ def threshold_step():
     except Exception as e:
         st.error(f"Error loading images: {str(e)}")
         return
-    # Display central slice of original image (already rotated)
-    st.subheader("Central Slice: Original Image")
-    st.image(img, caption="Original Image Central Slice", width=100, clamp=True)
-
-    # Display central slice of mask
-    st.subheader("Central Slice: Mask")
-    st.image(msk, caption="Mask Central Slice", width=100, clamp=True)
     
     threshold = st.slider(
         "Select threshold value",
