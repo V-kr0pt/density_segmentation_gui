@@ -45,7 +45,7 @@ def process_step():
             binary_image = np.where(thresholded_image > 0, 255, 0).astype(np.uint8)
             filename = f'slice_{slice_index}_threshold_{adjusted_threshold:.4f}.png'
             filepath = os.path.join(save_dir, filename)
-            Image.fromarray(binary_image, mode='L').save(filepath)
+            Image.fromarray(binary_image.T, mode='L').save(filepath)
         
         nifti_path = MaskOperations.create_mask_nifti(save_dir, original_affine)
         st.success(f"Processing completed! NIfTI file saved at: {nifti_path}")

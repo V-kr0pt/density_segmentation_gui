@@ -103,7 +103,7 @@ class MaskOperations:
                   for f in sorted(os.listdir(folder_path), 
                   key=lambda x: int(x.split('_')[1])) if f.endswith('.png')]
         volume = np.stack(images, axis=0)
-        #volume = np.transpose(volume, (0, 2, 1))  # Transpose to match NIfTI format
+        volume = np.transpose(volume, (0, 2, 1))  # Transpose to match NIfTI format
         nib.save(nib.Nifti1Image(volume, original_affine), 
                  mask_path)
         return mask_path
