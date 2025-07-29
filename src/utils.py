@@ -53,7 +53,7 @@ class ImageOperations:
         return cv2.cvtColor(norm_image, cv2.COLOR_GRAY2RGB), affine, nb_of_slices
 
     @staticmethod
-    def load_nii_slice(file_path, slice_index, dtype=np.float32, flip=False):
+    def load_nii_slice(file_path, slice_index, dtype=np.float32):
         nii_obj = nib.load(file_path)
         nii_data = nii_obj.get_fdata()
         slice_data = nii_data[slice_index, :, :]
@@ -107,24 +107,6 @@ class MaskOperations:
         nib.save(nib.Nifti1Image(volume, original_affine), 
                  mask_path)
         return mask_path
-
-    #@staticmethod
-    #def create_mask_nifti(folder_path, original_affine):
-    #    def valid_png(f):
-    #        parts = f.split('_')
-    #        return f.endswith('.png') and len(parts) > 1 and parts[1].split('.')[0].isdigit()
-    #    images = [
-    #        np.array(Image.open(os.path.join(folder_path, f)).convert('L'))
-    #        for f in sorted(
-    #            filter(valid_png, os.listdir(folder_path)),
-    #            key=lambda x: int(x.split('_')[1].split('.')[0])
-    #        )
-    #    ]
-    #    volume = np.stack(images, axis=0)
-    #    transposed_flipped_volume = np.flip(np.transpose(volume, (0, 2, 1)), axis=2)
-    #    nib.save(nib.Nifti1Image(transposed_flipped_volume, original_affine),
-    #             os.path.join(folder_path, 'mask.nii'))
-    #    return os.path.join(folder_path, 'mask.nii')
 
     @staticmethod
     def measure_mask_area(mask):
