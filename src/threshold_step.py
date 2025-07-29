@@ -1,8 +1,7 @@
 #from tqdm import tqdm
 import os
+import io
 import streamlit as st
-import numpy as np
-import matplotlib.pyplot as plt
 from utils import ImageOperations, ThresholdOperations
 
 def threshold_step():
@@ -18,12 +17,13 @@ def threshold_step():
     try:
         img = ImageOperations.load_nii_central_slice(original_image_path)
         msk = ImageOperations.load_nii_central_slice(mask_path, flip=True)
-        #img = np.rot90(img)  # Rotate the image for correct orientation
-        #msk = np.rot90(msk)  # Rotate the mask for correct orientation
-        #msk = np.flip(msk, axis=0)  # Flip the mask upside down
     except Exception as e:
         st.error(f"Error loading images: {str(e)}")
         return
+    
+    width_options = [400, 500, 600, 700, 800, 900, 1000]
+    selected_width = st.selectbox("Select image width", width_options, index=2)
+
     
     threshold = st.slider(
         "Select threshold value",
@@ -33,15 +33,15 @@ def threshold_step():
         step=0.01,
         key="threshold_slider"
     )
-    
-    import io
+
     fig = ThresholdOperations.display_thresholded_slice(img, msk, threshold)
     buf = io.BytesIO()
     fig.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
     buf.seek(0)
-    cols = st.columns([1, 2, 1])
+
+    cols = st.columns([1, 1, 1])
     with cols[1]:
-        st.image(buf, caption="Thresholded Central Slice", width=400)
+        st.image(buf, caption="Thresholded Central Slice", width=selected_width)
     
     if st.button("💾 Save Thresholded Mask"):
         save_dir = os.path.join(st.session_state["output_path"], 'dense_mask')

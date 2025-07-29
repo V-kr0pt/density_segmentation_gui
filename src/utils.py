@@ -95,7 +95,6 @@ class MaskOperations:
         result = cv2.bitwise_and(image, image, mask=mask)
         return result, mask
     
-    #GIVING AN ERROR IN THE END OF THE FILE PROCESSING
     @staticmethod 
     def create_mask_nifti(folder_path, original_affine):
         mask_path = os.path.join(folder_path, 'mask.nii')
