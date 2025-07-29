@@ -53,3 +53,7 @@ def process_step():
     if st.button("↩️ Back to Threshold Adjustment"):
         st.session_state["current_step"] = "threshold"
         st.rerun()
+
+    if st.button("🔄 Start Over"):
+        st.session_state.clear()
+        st.rerun()
