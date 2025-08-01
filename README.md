@@ -1,6 +1,6 @@
 # Density Segmentation GUI
 
-A professional-grade interactive web application for medical image segmentation, specifically designed for density-based segmentation of NIfTI (Neuroimaging Informatics Technology Initiative) files. This tool provides an intuitive graphical interface for drawing masks, adjusting thresholds, and processing medical imaging data.
+A interactive web application for medical image segmentation, specifically designed for density-based segmentation of NIfTI (Neuroimaging Informatics Technology Initiative) files. This tool provides an  graphical interface for drawing masks, adjusting thresholds, and processing medical imaging data.
 
 ## Features
 
