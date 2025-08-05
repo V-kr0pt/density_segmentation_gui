@@ -19,6 +19,14 @@ class Model:
         # Defining stride as half of patch_size
         self.stride = [max(1, p // 2) for p in self.patch_size]
 
+    def check_image_shape(self, data):
+        if len(data.shape) != 3:
+            raise ValueError(f"Input data must be a 3D array, got shape {data.shape}.")
+        assert data.shape[0] - data.shape[1] < 0 and \
+              data.shape[0] - data.shape[2] < 0, \
+            f"Image loaded is in incorrect shape {data.shape}.\nIt should be in (Z, X, Y) format. where Z is the number of slices"
+
+
     def preprocess_data(self, data):
         data = data.astype("float32")
         mask = data > 0
@@ -78,7 +86,11 @@ class Model:
         return output
 
     def predict(self, data):
+        # check if data has the correct shape
+        self.check_image_shape(data)
+        # Preprocess data
         data = self.preprocess_data(data)
+
         # If shape is the same of patch_size, only predict the patch
         if list(data.shape) == self.patch_size:
             return self.predict_patch(data)
@@ -95,36 +107,39 @@ class Model:
 
 class ImageLoader:
     def __init__(self, file_path):
-        self.file_path = file_path
-        self.real_factor = (1.0, 1.0, 1)  # You can adjust this factor as needed
-        self.img = None  # To store the loaded image
+        self.file_path = file_path 
+        self.real_factor = (1, 1.0, 1.0)  # To store the real downsampling factor and use it for upsampling
+        self.img = None  # To store the loaded image with header info
         self.img_array = None  # To store the numpy array of the image
 
     def load(self):
         # Read the .nii image containing the data with SimpleITK:
         self.img = sitk.ReadImage(self.file_path)
-        self.img_array = sitk.GetArrayFromImage(self.img)
         # and access the numpy array:
+        self.img_array = sitk.GetArrayFromImage(self.img).transpose(2, 0, 1) # Transpose to (Z, X, Y) format
         return self.img_array
     
     def downsample_image(self, factor=10):
-        zoom_factors = [1 / factor, 1 / factor, 1]
+        zoom_factors = [1, 1 / factor, 1 / factor]
         downsampled_img = zoom(self.img_array, zoom_factors, order=1)
-        self.real_factor = (downsampled_img.shape[0] / self.img_array.shape[0],
-                             downsampled_img.shape[1] / self.img_array.shape[1],
-                               1)
+        
+        # store the real downsampling factor for later upsampling
+        self.real_factor = (1,
+                            downsampled_img.shape[1] / self.img_array.shape[1],
+                            downsampled_img.shape[2] / self.img_array.shape[2])
         
         return downsampled_img
     
     def upsample_image(self, image):
-        zoom_factors = [1 / self.real_factor[0], 1 / self.real_factor[1], 1]
+        zoom_factors = [1, 1 / self.real_factor[1], 1 / self.real_factor[2]]
         upsampled_img = zoom(image, zoom_factors, order=1)
         return upsampled_img
         
     
     def save_image(self, array, output_path):
-        # Load reference image to get spacing, origin, direction
         out_img = sitk.GetImageFromArray(array)
+
+        # Load reference image to get spacing, origin, direction
         out_img.SetSpacing(self.img.GetSpacing())
         out_img.SetOrigin(self.img.GetOrigin())
         out_img.SetDirection(self.img.GetDirection())
