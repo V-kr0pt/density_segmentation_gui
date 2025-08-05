@@ -6,3 +6,5 @@ output/*
 DBT-P00125
 *.ipynb
 venv
+*.onnx
+config.json
