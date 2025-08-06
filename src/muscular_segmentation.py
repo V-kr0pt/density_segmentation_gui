@@ -3,6 +3,7 @@ from tqdm import tqdm
 import SimpleITK as sitk
 import skimage.measure as measure
 from scipy.ndimage import zoom
+import cv2
 import numpy as np
 import json
 import os
@@ -203,6 +204,20 @@ class Model:
         largest = max(props, key=lambda x: x.area)
         return (labels == largest.label).astype(np.uint8)
     
+    def morphological_closing(self, mask, kernel_size=15):
+        '''
+        Apply morphological closing to a binary mask.
+        Args:
+            mask (np.ndarray): The input binary mask.
+            kernel_size (int): The size of the structuring element for morphological operations.
+        Returns:
+            np.ndarray: The binary mask after applying morphological closing.
+        '''
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        return closed.astype(np.uint8)
+    
     def sigmoid(self, z):
         return 1/(1 + np.exp(-z))
         
@@ -217,7 +232,7 @@ class Model:
             mask = (pectoral_prob > threshold).astype(np.uint8) # see thresholding after
             mask = self.keep_largest_component(mask)
         mask = self.remove_padding(mask)
-
+        mask = self.morphological_closing(mask)
         if self.pectoral_side == 'left':
             mask = np.flip(mask, axis=2)
 
