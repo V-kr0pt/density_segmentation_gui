@@ -28,6 +28,9 @@ class Model:
         self.patch_size = self.config["model_parameters"]["patch_size"]  # exemple: [64, 256, 128] 
         self.stride = [max(1, p // 2) for p in self.patch_size] # defining stride as half of patch_size
         
+        # save pectoral side
+        self.pectoral_side = None
+        self.extra_factor = 2  # Factor to increase sampling density on the pectoral side
 
     def check_image_shape(self, data):
         if len(data.shape) != 3:
@@ -50,14 +53,11 @@ class Model:
             std = np.std(data)
         data = (data - mean) / (std + 1e-8)
 
-        # pad to data have at least patch_size
-        plt.imshow(data[data.shape[0] // 2], cmap="gray")
-        plt.title('data antes pad')
-        plt.savefig('data_antes_pad.png')
+        self.pectoral_side = self.detect_pectoral_side(data)
+        if self.pectoral_side == 'left':
+            data = np.flip(data, axis=2)
+
         data = self.pad_to_patch_size(data)
-        plt.imshow(data[self.original_shape[0] // 2], cmap="gray")
-        plt.title('data apos pad')
-        plt.savefig('data_apos_pad.png')
         return data
     
 
@@ -116,6 +116,29 @@ class Model:
                 slices.append(slice(0, dim))
                 
         return data[tuple(slices)]
+
+    def detect_pectoral_side(self, image, threshold=0.1):
+        """
+        Detects the side of the pectoral muscle based on the mean intensity of the left and right halves of the image.
+        Args:
+            image (np.ndarray): The input image.
+            threshold (float): The threshold to determine the side.
+        Returns:
+            str: 'left' if the left side is more intense, 'right' if the right side is more intense, 'unknown' otherwise.
+        """
+        mid_x = image.shape[2] // 2
+        left_half = image[:, :, :mid_x]
+        right_half = image[:, :, mid_x:]
+
+        left_mean = np.mean(left_half)
+        right_mean = np.mean(right_half)
+
+        if left_mean > right_mean + threshold:
+            return 'left'
+        elif right_mean > left_mean + threshold:
+            return 'right'
+        else:
+            return 'unknown'
 
 
     def predict_patch(self, patch):
@@ -188,9 +211,16 @@ class Model:
         # The class 1 is the pectoral muscle
         if np.any(pred):
             pectoral_prob = self.sigmoid(pred[1])  # shape: (C, Z, Y, X)
+            plt.imshow(pectoral_prob.sum(axis=0), cmap="hot")
+            plt.title("Central slice pectoral_prob")
+            plt.savefig("central_slice_pectoral_prob.png")
             mask = (pectoral_prob > threshold).astype(np.uint8) # see thresholding after
             mask = self.keep_largest_component(mask)
         mask = self.remove_padding(mask)
+
+        if self.pectoral_side == 'left':
+            mask = np.flip(mask, axis=2)
+
         return mask
     
 
@@ -225,6 +255,7 @@ class ImageLoader:
             self.resample_to_spacing() 
         # and access the numpy array:
         self.img_array = sitk.GetArrayFromImage(self.img).transpose(2, 0, 1) # Transpose to (Z, X, Y) format
+        self.img_array = np.flip(self.img_array, axis=2)
         return self.img_array
     
 
