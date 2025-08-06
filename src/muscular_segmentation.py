@@ -15,13 +15,17 @@ class Model:
     def __init__(self, model_path):
         self.model_path = model_path
         path_model_0 = os.path.join(model_path, 'fold_0', 'checkpoint_final.onnx')
-        #path_model_1 = os.path.join(model_path, 'fold_1', 'checkpoint_final.onnx')
-        #path_model_2 = os.path.join(model_path, 'fold_2', 'checkpoint_final.onnx')
-        #path_model_3 = os.path.join(model_path, 'fold_3', 'checkpoint_final.onnx')
-        #path_model_4 = os.path.join(model_path, 'fold_4', 'checkpoint_final.onnx')
+        path_model_1 = os.path.join(model_path, 'fold_1', 'checkpoint_final.onnx')
+        path_model_2 = os.path.join(model_path, 'fold_2', 'checkpoint_final.onnx')
+        path_model_3 = os.path.join(model_path, 'fold_3', 'checkpoint_final.onnx')
+        path_model_4 = os.path.join(model_path, 'fold_4', 'checkpoint_final.onnx')
 
-        # only loading the first model for simplicity
-        self.session = ort.InferenceSession(path_model_0, providers=["CUDAExecutionProvider"])
+        # loading models
+        self.session_0 = ort.InferenceSession(path_model_0, providers=["CUDAExecutionProvider"])
+        self.session_1 = ort.InferenceSession(path_model_1, providers=["CUDAExecutionProvider"])
+        self.session_2 = ort.InferenceSession(path_model_2, providers=["CUDAExecutionProvider"])
+        self.session_3 = ort.InferenceSession(path_model_3, providers=["CUDAExecutionProvider"])
+        self.session_4 = ort.InferenceSession(path_model_4, providers=["CUDAExecutionProvider"])
 
         # load model config
         config_path = os.path.join(os.path.dirname(model_path), 'config.json')
@@ -145,8 +149,17 @@ class Model:
     def predict_patch(self, patch):
         # Patch inference
         patch_input = patch[np.newaxis, np.newaxis, ...]  # [1, 1, pz, py, px]
-        input_name = self.session.get_inputs()[0].name
-        pred_patch = self.session.run(None, {input_name: patch_input})[0]
+        input_name = self.session_0.get_inputs()[0].name
+
+        pred_patch_0 = self.session_0.run(None, {input_name: patch_input})[0]
+        pred_patch_1 = self.session_1.run(None, {input_name: patch_input})[0]
+        pred_patch_2 = self.session_2.run(None, {input_name: patch_input})[0]
+        pred_patch_3 = self.session_3.run(None, {input_name: patch_input})[0]
+        pred_patch_4 = self.session_4.run(None, {input_name: patch_input})[0]
+
+        pred_patch = np.concat([pred_patch_0, pred_patch_1, pred_patch_2, pred_patch_3, pred_patch_4])
+        pred_patch = np.mean(pred_patch, axis=0)
+        
         return np.squeeze(pred_patch)
     
     def get_sliding_window_positions(self, image_size, patch_size, stride):
@@ -318,7 +331,8 @@ class ImageLoader:
 if __name__ == "__main__":
     model_path = "models/3d_fullres/"
     model = Model(model_path)
-    image_path = "media/21993_39.nii" # Example with pectoral
+    #image_path = "media/21993_39.nii" # Example with pectoral
+    image_path = "media/21992_35.nii"
     #image_path = "media/21991_40.nii" # Example without pectoral
     image_loader = ImageLoader(image_path)
 
