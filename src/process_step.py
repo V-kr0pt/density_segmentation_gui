@@ -56,4 +56,5 @@ def process_step():
 
     if st.button("🔄 Start Over"):
         st.session_state.clear()
+        st.session_state["current_step"] = "mode_selection"
         st.rerun()

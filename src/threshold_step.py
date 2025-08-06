@@ -57,3 +57,8 @@ def threshold_step():
     if st.button("↩️ Back to Mask Drawing"):
         st.session_state["current_step"] = "draw"
         st.rerun()
+    
+    if st.button("🏠 Back to Main Menu"):
+        st.session_state.clear()
+        st.session_state["current_step"] = "mode_selection"
+        st.rerun()

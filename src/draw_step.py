@@ -28,6 +28,11 @@ def draw_step():
         st.session_state.clear()
         st.success("Selection cleared.")
         st.rerun()
+    
+    if st.button("🏠 Back to Main Menu"):
+        st.session_state.clear()
+        st.session_state["current_step"] = "mode_selection"
+        st.rerun()
 
     input_folder = os.path.join(os.getcwd(), 'media')
     only_not_done = st.checkbox("Show only not done files")
