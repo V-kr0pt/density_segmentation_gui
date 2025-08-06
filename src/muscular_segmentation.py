@@ -1,6 +1,7 @@
 import onnxruntime as ort
 from tqdm import tqdm
 import SimpleITK as sitk
+import skimage.measure as measure
 from scipy.ndimage import zoom
 import numpy as np
 import json
@@ -12,12 +13,21 @@ import matplotlib.pyplot as plt
 class Model:
     def __init__(self, model_path):
         self.model_path = model_path
+        path_model_0 = os.path.join(model_path, 'fold_0', 'checkpoint_final.onnx')
+        #path_model_1 = os.path.join(model_path, 'fold_1', 'checkpoint_final.onnx')
+        #path_model_2 = os.path.join(model_path, 'fold_2', 'checkpoint_final.onnx')
+        #path_model_3 = os.path.join(model_path, 'fold_3', 'checkpoint_final.onnx')
+        #path_model_4 = os.path.join(model_path, 'fold_4', 'checkpoint_final.onnx')
+
+        # only loading the first model for simplicity
+        self.session = ort.InferenceSession(path_model_0, providers=["CUDAExecutionProvider"])
+
+        # load model config
         config_path = os.path.join(os.path.dirname(model_path), 'config.json')
         self.config = json.load(open(config_path, 'r'))
-        self.session = ort.InferenceSession(model_path, providers=["CUDAExecutionProvider"])
         self.patch_size = self.config["model_parameters"]["patch_size"]  # exemple: [64, 256, 128] 
-        # Defining stride as half of patch_size
-        self.stride = [max(1, p // 2) for p in self.patch_size]
+        self.stride = [max(1, p // 2) for p in self.patch_size] # defining stride as half of patch_size
+        
 
     def check_image_shape(self, data):
         if len(data.shape) != 3:
@@ -41,20 +51,72 @@ class Model:
         data = (data - mean) / (std + 1e-8)
 
         # pad to data have at least patch_size
+        plt.imshow(data[data.shape[0] // 2], cmap="gray")
+        plt.title('data antes pad')
+        plt.savefig('data_antes_pad.png')
         data = self.pad_to_patch_size(data)
+        plt.imshow(data[self.original_shape[0] // 2], cmap="gray")
+        plt.title('data apos pad')
+        plt.savefig('data_apos_pad.png')
         return data
     
+
     def pad_to_patch_size(self, data):
+        self.original_shape = data.shape
+        self.flags = [0, 0] # upper/lower, left/right padding flags
+        middle_slice = data[self.original_shape[0] // 2,:,:]
+        # verify if the upper or lower part of the image is background
+        if np.sum(middle_slice[0,:]) == 0:
+            self.flags[0] = 1  # upper part is background
+
+        # verify if the left or right part of the image is background
+        if np.sum(middle_slice[:,0]) == 0:
+            self.flags[2] = 1
+
         pad_width = []
-        for dim, p in zip(data.shape, self.patch_size):
-            if dim < p:
-                before = (p - dim) // 2
-                after = p - dim - before
+        for axis, (dim, p) in enumerate(zip(data.shape, self.patch_size)):
+            if dim < p: 
+                pad = p - dim
+                
+                # Z axis
+                if axis == 0:  
+                    pad_width.append((0, pad))
+                    continue  # default pad at the end
+                else:
+                    flag = self.flags[axis - 1]  # flags[0] for X, flags[1] for Y
+                    # X and Y axis
+                    if flag:
+                        pad_width.append((0,pad))
+                    else:
+                        pad_width.append((pad, 0))
             else:
-                before = 0
-                after = 0
-            pad_width.append((before, after))
-        return np.pad(data, pad_width, mode='constant')
+                # no padding needed
+                pad_width.append((0, 0))
+ 
+        return np.pad(data, pad_width, mode='minimum')
+
+    def remove_padding(self, data):
+        slices = []
+        for axis, (dim, p) in enumerate(zip(self.original_shape, self.patch_size)):
+            pad = p - dim if dim < p else 0
+            if pad > 0:
+                # Z axis (sempre pad no final)
+                if axis == 0:
+                    slices.append(slice(0, dim))
+                # X and Y axis
+                else:
+                    flag = self.flags[axis - 1]  # flags[0] for X, flags[1] for Y
+                    if flag:
+                        # Pad foi no início
+                        slices.append(slice(0, dim))
+                    else:
+                        # Pad foi no final
+                        slices.append(slice(pad, pad + dim))
+            else:
+                slices.append(slice(0, dim))
+                
+        return data[tuple(slices)]
+
 
     def predict_patch(self, patch):
         # Patch inference
@@ -63,6 +125,15 @@ class Model:
         pred_patch = self.session.run(None, {input_name: patch_input})[0]
         return np.squeeze(pred_patch)
     
+    def get_sliding_window_positions(self, image_size, patch_size, stride):
+        positions = []
+        max_pos = image_size - patch_size
+        pos = 0
+        while pos < max_pos:
+            positions.append(pos)
+            pos += stride
+        positions.append(max_pos)  # Garante que a borda final seja coberta
+        return positions
 
     def sliding_window_inference(self, data):
         # Sliding window to handle larger data than patch_size
@@ -73,9 +144,13 @@ class Model:
         pz, py, px = self.patch_size
         sz, sy, sx = self.stride
 
-        for z in tqdm(range(0, z_max - pz + 1, sz)):
-            for y in range(0, y_max - py + 1, sy):
-                for x in range(0, x_max - px + 1, sx):
+        z_starts = self.get_sliding_window_positions(z_max, pz, sz)
+        y_starts = self.get_sliding_window_positions(y_max, py, sy)
+        x_starts = self.get_sliding_window_positions(x_max, px, sx)
+
+        for z in tqdm(z_starts):
+            for y in y_starts:
+                for x in x_starts:
                     patch = data[z:z+pz, y:y+py, x:x+px]
                     pred_patch = self.predict_patch(patch)
                     output[:, z:z+pz, y:y+py, x:x+px] += pred_patch
@@ -83,7 +158,12 @@ class Model:
 
         count_map[count_map == 0] = 1
         output = output / count_map
+
+        plt.imshow(count_map[count_map.shape[0]//2], cmap="hot")
+        plt.title("Central slice count_map")
+        plt.savefig("central_slice_count_map.png")
         return output
+        
 
     def predict(self, data):
         # check if data has the correct shape
@@ -98,10 +178,33 @@ class Model:
         else:
             return self.sliding_window_inference(data)
         
+    def keep_largest_component(self, mask):
+        '''
+        Keep the largest connected component in a binary mask.
+        Args:
+            mask (np.ndarray): The input binary mask.
+        Returns:
+            np.ndarray: The binary mask with only the largest connected component retained.
+        '''
+
+        labels = measure.label(mask)
+        props = measure.regionprops(labels)
+        if not props:
+            return mask
+        largest = max(props, key=lambda x: x.area)
+        return (labels == largest.label).astype(np.uint8)
+    
+    def sigmoid(self, z):
+        return 1/(1 + np.exp(-z))
+        
     def postprocess_data(self, pred, threshold=0.5):
+        # The class 0 is the background
         # The class 1 is the pectoral muscle
-        pectoral_prob = pred[1]  # shape: (C, Z, Y, X)
-        mask = (pectoral_prob > threshold).astype(np.uint8) # see thresholding after
+        if np.any(pred):
+            pectoral_prob = self.sigmoid(pred[1])  # shape: (C, Z, Y, X)
+            mask = (pectoral_prob > threshold).astype(np.uint8) # see thresholding after
+            mask = self.keep_largest_component(mask)
+        mask = self.remove_padding(mask)
         return mask
     
 
@@ -125,13 +228,13 @@ class ImageLoader:
         
         # store the real downsampling factor for later upsampling
         self.real_factor = (1,
-                            downsampled_img.shape[1] / self.img_array.shape[1],
-                            downsampled_img.shape[2] / self.img_array.shape[2])
+                            self.img_array.shape[1] / downsampled_img.shape[1],
+                            self.img_array.shape[2] / downsampled_img.shape[2])
         
         return downsampled_img
     
     def upsample_image(self, image):
-        zoom_factors = [1, 1 / self.real_factor[1], 1 / self.real_factor[2]]
+        zoom_factors = [1, self.real_factor[1], self.real_factor[2]]
         upsampled_img = zoom(image, zoom_factors, order=1)
         return upsampled_img
         
@@ -147,47 +250,57 @@ class ImageLoader:
 
 
 if __name__ == "__main__":
-    model_path = "models/3d_fullres/fold_0/checkpoint_final.onnx"
+    model_path = "models/3d_fullres/"
     model = Model(model_path)
     image_path = "media/21993_39.nii" # Example with pectoral
     #image_path = "media/21991_40.nii" # Example without pectoral
     image_loader = ImageLoader(image_path)
 
-    # Preprocess data
-    data = image_loader.load()
-    print(f"Original data shape: {data.shape}")
+    # Load
+    original_image = image_loader.load()
+    print(f"Original data shape: {original_image.shape}")
 
-    data = image_loader.downsample_image(factor=10)
-    print(f"Data shape after downsampling: {data.shape}")
-    data = model.preprocess_data(data)
+    # Downsample 
+    downsampled_image = image_loader.downsample_image(factor=10)
+    print(f"Data shape after downsampling: {downsampled_image.shape}")
+
     # Make prediction
-    pred = model.predict(data)
-
-    print(f"Prediction shape: {pred.shape}"
-          f" | Data shape: {data.shape}")
+    pred = model.predict(downsampled_image)
+    print(f"Prediction shape: {pred.shape}")
 
     # Postprocess prediction
     pred = model.postprocess_data(pred)
     print(f"Postprocessed prediction shape: {pred.shape}")
+
+    # Upsample
     pred = image_loader.upsample_image(pred)
-    
-    # Check if prediction is not all zeros
-    if np.any(pred):
-        print("Prediction contains non-zero values.")
-    else:
-        print("Prediction is all zeros, check the model and input data.")
-        exit(1)
-    
+    print(f"upsampled prediction shape: {pred.shape}") 
     
     # Save prediction
     #output_path = "output/21991_40_pred.nii"
-    #image_loader.save_image(pred, output_path)    
+    #image_loader.save_image(pred, output_path)
+    # 
+
+    central_idx = original_image.shape[0] // 2
+    central_slice = original_image[central_idx]
+    central_pred = pred[central_idx]
+
+    plt.figure(figsize=(6,6))
+    plt.imshow(central_slice, cmap="gray")
+    # Sobrepõe a máscara em tons de roxo (alpha controla a transparência)
+    plt.imshow(central_pred, cmap="Purples", alpha=0.4)
+    plt.title("Overlay: Central slice + Prediction")
+    plt.axis('off')
+    plt.savefig("central_slice_overlay.png")
+    plt.close()    
        
-    plt.imshow(data[data.shape[0]//2], cmap="gray")
+    plt.imshow(central_slice, cmap="gray")
     plt.title("Central slice after normalization")
-    plt.show()
+    plt.savefig("central_slice.png")
+    #plt.show()
     plot_pred = pred*255
-    plt.imshow(plot_pred[pred.shape[0]//2], cmap="gray")
+    plt.imshow(central_pred, cmap="gray")
     plt.title("Central slice prediction")
-    plt.show()
+    plt.savefig("central_slice_prediction.png")
+    #plt.show()
 
