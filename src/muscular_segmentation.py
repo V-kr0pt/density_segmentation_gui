@@ -163,21 +163,7 @@ class Model:
         plt.title("Central slice count_map")
         plt.savefig("central_slice_count_map.png")
         return output
-        
-
-    def predict(self, data):
-        # check if data has the correct shape
-        self.check_image_shape(data)
-        # Preprocess data
-        data = self.preprocess_data(data)
-
-        # If shape is the same of patch_size, only predict the patch
-        if list(data.shape) == self.patch_size:
-            return self.predict_patch(data)
-        # If bigger than patch_size, use sliding window
-        else:
-            return self.sliding_window_inference(data)
-        
+    
     def keep_largest_component(self, mask):
         '''
         Keep the largest connected component in a binary mask.
@@ -208,19 +194,54 @@ class Model:
         return mask
     
 
+    def predict(self, data):
+        # check if data has the correct shape
+        self.check_image_shape(data)
+        # Preprocess data
+        data = self.preprocess_data(data)
+
+        # If shape is the same of patch_size, only predict the patch
+        if list(data.shape) == self.patch_size:
+            return self.predict_patch(data)
+        # If bigger than patch_size, use sliding window
+        else:
+            return self.sliding_window_inference(data)
+    
+    
+
 class ImageLoader:
     def __init__(self, file_path):
         self.file_path = file_path 
-        self.real_factor = (1, 1.0, 1.0)  # To store the real downsampling factor and use it for upsampling
+        self.real_factor = (None, None, None)  # To store the real downsampling factor and use it for upsampling
+        self.target_spacing = (1.0, 1.0, 1.0)
         self.img = None  # To store the loaded image with header info
         self.img_array = None  # To store the numpy array of the image
 
-    def load(self):
+    def load(self, spacing_resample=True):
         # Read the .nii image containing the data with SimpleITK:
         self.img = sitk.ReadImage(self.file_path)
+        # Resampling the space
+        if spacing_resample:
+            self.resample_to_spacing() 
         # and access the numpy array:
         self.img_array = sitk.GetArrayFromImage(self.img).transpose(2, 0, 1) # Transpose to (Z, X, Y) format
         return self.img_array
+    
+
+    def resample_to_spacing(self):
+        original_spacing = self.img.GetSpacing()
+        original_size = self.img.GetSize()
+        new_size = [
+            int(round(osz * ospc / tspc))
+            for osz, ospc, tspc in zip(original_size, original_spacing, self.target_spacing)
+        ]
+        resampler = sitk.ResampleImageFilter()
+        resampler.SetOutputSpacing(self.target_spacing)
+        resampler.SetSize(new_size)
+        resampler.SetOutputDirection(self.img.GetDirection())
+        resampler.SetOutputOrigin(self.img.GetOrigin())
+        resampler.SetInterpolator(sitk.sitkBSpline)
+        self.img = resampler.Execute(self.img)
     
     def downsample_image(self, factor=10):
         zoom_factors = [1, 1 / factor, 1 / factor]
@@ -237,7 +258,6 @@ class ImageLoader:
         zoom_factors = [1, self.real_factor[1], self.real_factor[2]]
         upsampled_img = zoom(image, zoom_factors, order=1)
         return upsampled_img
-        
     
     def save_image(self, array, output_path):
         out_img = sitk.GetImageFromArray(array)
