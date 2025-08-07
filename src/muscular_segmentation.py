@@ -20,6 +20,9 @@ class Model:
         path_model_3 = os.path.join(model_path, 'fold_3', 'checkpoint_final.onnx')
         path_model_4 = os.path.join(model_path, 'fold_4', 'checkpoint_final.onnx')
 
+        # preload dlls to make possible use Cuda
+        #ort.preload_dlls()
+
         # loading models
         self.session_0 = ort.InferenceSession(path_model_0, providers=["CUDAExecutionProvider"])
         self.session_1 = ort.InferenceSession(path_model_1, providers=["CUDAExecutionProvider"])
@@ -231,21 +234,34 @@ class Model:
         closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         return closed.astype(np.uint8)
     
-    def sigmoid(self, z):
-        return 1/(1 + np.exp(-z))
+    def softmax(self, x, axis=0):
+        e_x = np.exp(x - np.max(x, axis=axis, keepdims=True))
+        return e_x / np.sum(e_x, axis=axis, keepdims=True)
         
-    def postprocess_data(self, pred, threshold=0.5):
+    def postprocess_data(self, pred_logits, threshold=0.5):
         # The class 0 is the background
         # The class 1 is the pectoral muscle
-        if np.any(pred):
-            pectoral_prob = self.sigmoid(pred[1])  # shape: (C, Z, Y, X)
+        if np.any(pred_logits):
+
+            # Apply softmax to get probabilities
+            probs = self.softmax(pred_logits, axis=0)
+            pectoral_prob = probs[1]  # shape: (C, Z, Y, X)
+
+            # Visualize central slice of pectoral_prob
             plt.imshow(pectoral_prob.sum(axis=0), cmap="hot")
             plt.title("Central slice pectoral_prob")
             plt.savefig("central_slice_pectoral_prob.png")
-            mask = (pectoral_prob > threshold).astype(np.uint8) # see thresholding after
+            
+            # thresholding
+            mask = (pectoral_prob > threshold).astype(np.uint8) 
+            # Keep largest component    
             mask = self.keep_largest_component(mask)
+        
+        # Remove padding and apply morphological closing
         mask = self.remove_padding(mask)
         mask = self.morphological_closing(mask)
+        
+        # Reorient if needed
         if self.pectoral_side == 'left':
             mask = np.flip(mask, axis=2)
 
@@ -283,7 +299,6 @@ class ImageLoader:
             self.resample_to_spacing() 
         # and access the numpy array:
         self.img_array = sitk.GetArrayFromImage(self.img).transpose(2, 0, 1) # Transpose to (Z, X, Y) format
-        self.img_array = np.flip(self.img_array, axis=2)
         return self.img_array
     
 
