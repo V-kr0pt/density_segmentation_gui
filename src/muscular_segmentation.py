@@ -2,7 +2,7 @@ import onnxruntime as ort
 from tqdm import tqdm
 import SimpleITK as sitk
 import skimage.measure as measure
-from scipy.ndimage import zoom
+from scipy.ndimage import zoom, gaussian_filter
 import cv2
 import numpy as np
 import json
@@ -29,6 +29,9 @@ class Model:
         self.session_2 = ort.InferenceSession(path_model_2, providers=["CUDAExecutionProvider"])
         self.session_3 = ort.InferenceSession(path_model_3, providers=["CUDAExecutionProvider"])
         self.session_4 = ort.InferenceSession(path_model_4, providers=["CUDAExecutionProvider"])
+
+        # store sessions in a list
+        self.sessions = [self.session_0, self.session_1, self.session_2, self.session_3, self.session_4]
 
         # load model config
         config_path = os.path.join(os.path.dirname(model_path), 'config.json')
@@ -154,14 +157,8 @@ class Model:
         patch_input = patch[np.newaxis, np.newaxis, ...]  # [1, 1, pz, py, px]
         input_name = self.session_0.get_inputs()[0].name
 
-        pred_patch_0 = self.session_0.run(None, {input_name: patch_input})[0]
-        pred_patch_1 = self.session_1.run(None, {input_name: patch_input})[0]
-        pred_patch_2 = self.session_2.run(None, {input_name: patch_input})[0]
-        pred_patch_3 = self.session_3.run(None, {input_name: patch_input})[0]
-        pred_patch_4 = self.session_4.run(None, {input_name: patch_input})[0]
-
-        pred_patch = np.concat([pred_patch_0, pred_patch_1, pred_patch_2, pred_patch_3, pred_patch_4])
-        pred_patch = np.mean(pred_patch, axis=0)
+        preds = [sess.run(None, {input_name: patch_input})[0] for sess in self.sessions]
+        pred_patch = np.mean(preds, axis=0)
         
         return np.squeeze(pred_patch)
     
