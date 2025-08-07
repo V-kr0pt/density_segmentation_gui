@@ -31,6 +31,7 @@ class Model:
         self.session_4 = ort.InferenceSession(path_model_4, providers=["CUDAExecutionProvider"])
 
         # store sessions in a list
+        self.input_name = self.session_0.get_inputs()[0].name  # Assuming all sessions have the same input name
         self.sessions = [self.session_0, self.session_1, self.session_2, self.session_3, self.session_4]
 
         # load model config
@@ -42,6 +43,7 @@ class Model:
         # save pectoral side
         self.pectoral_side = None
         self.extra_factor = 2  # Factor to increase sampling density on the pectoral side
+
 
     def check_image_shape(self, data):
         if len(data.shape) != 3:
@@ -105,6 +107,7 @@ class Model:
                 pad_width.append((0, 0))
  
         return np.pad(data, pad_width, mode='minimum')
+    
 
     def remove_padding(self, data):
         slices = []
@@ -127,6 +130,7 @@ class Model:
                 slices.append(slice(0, dim))
                 
         return data[tuple(slices)]
+    
 
     def detect_pectoral_side(self, image, threshold=0.1):
         """
@@ -155,13 +159,37 @@ class Model:
     def predict_patch(self, patch):
         # Patch inference
         patch_input = patch[np.newaxis, np.newaxis, ...]  # [1, 1, pz, py, px]
-        input_name = self.session_0.get_inputs()[0].name
-
-        preds = [sess.run(None, {input_name: patch_input})[0] for sess in self.sessions]
+        
+        preds = [sess.run(None, {self.input_name: patch_input})[0] for sess in self.sessions]
         pred_patch = np.mean(preds, axis=0)
         
         return np.squeeze(pred_patch)
     
+    
+    def predict_patch_tta(self, patch):
+        patch_input = patch[np.newaxis, np.newaxis, ...]
+
+        # Predict original
+        preds = [sess.run(None, {self.input_name: patch_input})[0] for sess in self.sessions]
+        pred_orig = np.mean(preds, axis=0)[0]  # shape (C, Z, Y, X)
+
+        # Predict flipped (along X)
+        patch_flipped = np.flip(patch_input, axis=4)
+        preds_flipped = [sess.run(None, {self.input_name: patch_flipped})[0] for sess in self.sessions]
+        pred_flipped = np.mean(preds_flipped, axis=0)[0]
+        pred_flipped = np.flip(pred_flipped, axis=3)  # unflip X
+
+        return (pred_orig + pred_flipped) / 2
+    
+
+    def get_gaussian_importance_map(self, patch_size, sigma_scale=1./8):
+        center_coords = [s // 2 for s in patch_size]
+        sigmas = [s * sigma_scale for s in patch_size]
+        grid = np.zeros(patch_size, dtype=np.float32)
+        grid[tuple(center_coords)] = 1
+        return gaussian_filter(grid, sigma=sigmas, mode='constant', cval=0)
+    
+
     def get_sliding_window_positions(self, image_size, patch_size, stride):
         positions = []
         max_pos = image_size - patch_size
@@ -173,7 +201,6 @@ class Model:
         return positions
 
     def sliding_window_inference(self, data):
-        # Sliding window to handle larger data than patch_size
         num_classes = 2
         output = np.zeros((num_classes, *data.shape), dtype=np.float32)
         count_map = np.zeros(data.shape, dtype=np.float32)
@@ -181,17 +208,21 @@ class Model:
         pz, py, px = self.patch_size
         sz, sy, sx = self.stride
 
-        z_starts = self.get_sliding_window_positions(z_max, pz, sz)
-        y_starts = self.get_sliding_window_positions(y_max, py, sy)
-        x_starts = self.get_sliding_window_positions(x_max, px, sx)
+        z_starts = list(range(0, max(z_max - pz + 1, 1), sz)) + ([z_max - pz] if z_max - pz not in range(0, z_max, sz) else [])
+        y_starts = list(range(0, max(y_max - py + 1, 1), sy)) + ([y_max - py] if y_max - py not in range(0, y_max, sy) else [])
+        x_starts = list(range(0, max(x_max - px + 1, 1), sx)) + ([x_max - px] if x_max - px not in range(0, x_max, sx) else [])
 
-        for z in tqdm(z_starts):
+        importance_map = self.get_gaussian_importance_map(self.patch_size)
+
+        for z in z_starts:
             for y in y_starts:
                 for x in x_starts:
                     patch = data[z:z+pz, y:y+py, x:x+px]
-                    pred_patch = self.predict_patch(patch)
-                    output[:, z:z+pz, y:y+py, x:x+px] += pred_patch
-                    count_map[z:z+pz, y:y+py, x:x+px] += 1
+                    pred_patch = self.predict_patch_tta(patch)
+
+                    for c in range(num_classes):
+                        output[c, z:z+pz, y:y+py, x:x+px] += pred_patch[c] * importance_map
+                    count_map[z:z+pz, y:y+py, x:x+px] += importance_map
 
         count_map[count_map == 0] = 1
         output = output / count_map
@@ -200,7 +231,8 @@ class Model:
         plt.title("Central slice count_map")
         plt.savefig("central_slice_count_map.png")
         return output
-    
+
+
     def keep_largest_component(self, mask):
         '''
         Keep the largest connected component in a binary mask.
@@ -217,6 +249,7 @@ class Model:
         largest = max(props, key=lambda x: x.area)
         return (labels == largest.label).astype(np.uint8)
     
+
     def morphological_closing(self, mask, kernel_size=15):
         '''
         Apply morphological closing to a binary mask.
@@ -231,10 +264,12 @@ class Model:
         closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         return closed.astype(np.uint8)
     
+
     def softmax(self, x, axis=0):
         e_x = np.exp(x - np.max(x, axis=axis, keepdims=True))
         return e_x / np.sum(e_x, axis=axis, keepdims=True)
-        
+
+
     def postprocess_data(self, pred_logits, threshold=0.5):
         # The class 0 is the background
         # The class 1 is the pectoral muscle
@@ -288,6 +323,25 @@ class ImageLoader:
         self.img = None  # To store the loaded image with header info
         self.img_array = None  # To store the numpy array of the image
 
+    def obtain_right_order(self, arr):
+        """
+        Ensure the first dimension is the lower dimension. 
+        Since the first dimension should be the number of slices (Z),
+        this function checks the shape and transposes if necessary.
+        """        
+        # verify the second dimension is lower than the first
+        if arr.shape[0] - arr.shape[1] > 0:
+            # verify the third dimension is lower than the second
+            if arr.shape[2] - arr.shape[1] > 0:
+                arr = arr.transpose(1, 0, 2)
+            else:
+                arr = arr.transpose(2, 0, 1)
+        # verify if the last dimension is lower than the first
+        elif arr.shape[0] - arr.shape[2] > 0:
+            arr = arr.transpose(2, 0, 1)
+
+        return arr
+
     def load(self, spacing_resample=True):
         # Read the .nii image containing the data with SimpleITK:
         self.img = sitk.ReadImage(self.file_path)
@@ -295,7 +349,12 @@ class ImageLoader:
         if spacing_resample:
             self.resample_to_spacing() 
         # and access the numpy array:
-        self.img_array = sitk.GetArrayFromImage(self.img).transpose(2, 0, 1) # Transpose to (Z, X, Y) format
+        # the first dimension should be the lower dimension.
+        
+        self.img_array = sitk.GetArrayFromImage(self.img)
+        self.img_array = self.obtain_right_order(self.img_array)        
+
+        #self.img_array = sitk.GetArrayFromImage(self.img).transpose(2, 0, 1) # Transpose to (Z, X, Y) format
         return self.img_array
     
 
@@ -344,7 +403,9 @@ if __name__ == "__main__":
     model_path = "models/3d_fullres/"
     model = Model(model_path)
     #image_path = "media/21993_39.nii" # Example with pectoral
-    image_path = "media/21992_35.nii"
+    #image_path = "media/21992_35.nii"
+    image_path = "media/21992_35.nii.gz"
+    #image_path = "media/teste/06618305_PROC_L_MLO_20230421152741.nii.gz"  # Example with pectoral
     #image_path = "media/21991_40.nii" # Example without pectoral
     image_loader = ImageLoader(image_path)
 
