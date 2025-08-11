@@ -9,7 +9,7 @@ def file_selection_step():
     input_folder = os.path.join(os.getcwd(), 'media')
     output_folder = os.path.join(os.getcwd(), 'output')
     
-    # --- Recalcular progresso real a partir do disco ---
+    # --- Real progress from saved on disk ---
     if "batch_completed_files" not in st.session_state:
         st.session_state["batch_completed_files"] = {"draw": [], "threshold": [], "process": []}
 

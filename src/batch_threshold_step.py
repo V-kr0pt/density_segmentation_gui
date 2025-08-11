@@ -1,5 +1,6 @@
 import os
 import io
+import json
 import streamlit as st
 from utils import ImageOperations, ThresholdOperations
 
@@ -17,7 +18,16 @@ def batch_threshold_step():
     batch_files = st.session_state["batch_files"]
     current_index = st.session_state.get("batch_current_index", 0)
     completed_draw = st.session_state["batch_completed_files"]["draw"]
-    completed_threshold = st.session_state["batch_completed_files"]["threshold"]
+    all_completed_threshold = st.session_state["batch_completed_files"]["threshold"]
+    completed_threshold = [f for f in all_completed_threshold if f in st.session_state["batch_files_without_extension"]] # only the set of batch files that already has a polygon
+    
+    # check if the threshold.json is in the output folder
+    for file in completed_threshold:
+        output_path = os.path.join(os.getcwd(), 'output', file)
+        threshold_json = os.path.join(output_path, "threshold.json")
+        if not os.path.exists(threshold_json):
+            completed_threshold.remove(file)
+        
     
     # Check if all draw steps are completed
     if len(completed_draw) < len(batch_files):
@@ -47,13 +57,22 @@ def batch_threshold_step():
     current_file = batch_files[current_index]
     current_file_name = current_file.split('.')[0]
     
-    # Skip if already completed
+    # Skip if already completed -> search the next pending
     if current_file_name in completed_threshold:
-        st.session_state["batch_current_index"] = current_index + 1
+        next_index = None
+        for idx in range(current_index + 1, len(batch_files)):
+            if batch_files[idx].split('.')[0] not in completed_threshold:
+                next_index = idx
+                break
+        if next_index is not None:
+            st.session_state["batch_current_index"] = next_index
+        else:
+            # Nenhum pendente encontrado
+            st.session_state["batch_current_index"] = len(batch_files)
         st.rerun()
         return
     
-    # Skip if not in completed_draw (shouldn't happen, but safety check)
+    # Skip if not in completed_draw
     if current_file_name not in completed_draw:
         st.session_state["batch_current_index"] = current_index + 1
         st.rerun()
@@ -109,10 +128,9 @@ def batch_threshold_step():
     width_options = [400, 500, 600, 700, 800, 900, 1000]
     selected_width = st.selectbox("Select image width", width_options, index=2, key=f"width_{current_file}")
     
-    # Threshold slider - use a unique key for each file
+    # Threshold slider
     threshold_key = f"threshold_slider_{current_file_name}"
     
-    # Get saved threshold if it exists
     saved_thresholds = st.session_state.get("batch_thresholds", {})
     default_threshold = saved_thresholds.get(current_file_name, 0.38)
     
@@ -125,7 +143,6 @@ def batch_threshold_step():
         key=threshold_key
     )
     
-    # Save threshold in session state
     if "batch_thresholds" not in st.session_state:
         st.session_state["batch_thresholds"] = {}
     st.session_state["batch_thresholds"][current_file_name] = threshold
@@ -142,21 +159,31 @@ def batch_threshold_step():
     
     # Save button
     if st.button("💾 Save Threshold and Continue to Next File"):
-        # Save threshold for this file
+        # Save threshold in session
         if "batch_final_thresholds" not in st.session_state:
             st.session_state["batch_final_thresholds"] = {}
         st.session_state["batch_final_thresholds"][current_file_name] = threshold
+
+        # Save threshold to disk
+        try:
+            threshold_json = os.path.join(output_path, "threshold.json")
+            with open(threshold_json, "w") as f:
+                json.dump({"threshold": threshold}, f)
+
+             # Mark file as completed
+            st.session_state["batch_completed_files"]["threshold"].append(current_file_name)
+
+            # Move to next file
+            st.session_state["batch_current_index"] = current_index + 1
+
+            st.success(f"Threshold {threshold:.2f} saved for {current_file}!")
         
-        # Mark file as completed
-        st.session_state["batch_completed_files"]["threshold"].append(current_file_name)
+        except Exception as e:
+            st.warning(f"Could not save threshold for {current_file_name}: {e}")
         
-        # Move to next file
-        st.session_state["batch_current_index"] = current_index + 1
-        
-        st.success(f"Threshold {threshold:.2f} saved for {current_file}!")
-        st.rerun()
+        st.rerun()      
     
-    # Show current thresholds for all processed files
+    # Show current thresholds
     if "batch_final_thresholds" in st.session_state and len(st.session_state["batch_final_thresholds"]) > 0:
         with st.expander("Saved Thresholds"):
             for file_name, thresh in st.session_state["batch_final_thresholds"].items():
