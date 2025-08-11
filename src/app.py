@@ -10,48 +10,28 @@ import streamlit as st
 # ================== Main App ==================
 def main():
     st.set_page_config(layout="wide")
-    st.title("# Density Segmentation GUI")
+    st.title("Density Segmentation GUI")
     
     if "current_step" not in st.session_state:
         st.session_state["current_step"] = "mode_selection"
     
     # Mode selection
     if st.session_state["current_step"] == "mode_selection":
-        st.header("Choose Processing Mode")
+        #st.header("Choose Processing Mode")
         
-        col1, col2 = st.columns(2)
+        _, col,_ = st.columns(3)
         
-        with col1:
-            st.subheader("🔄 Batch Processing")
-            st.write("Process multiple .nii files in sequence:")
-            st.write("• Select multiple files")
-            st.write("• Draw masks for each file")
-            st.write("• Set thresholds for each file")
-            st.write("• Process all files at once")
-            
-            if st.button("Start Batch Processing", type="primary"):
+        # centralized write
+        with col:
+            st.subheader("Process multiple .nii or .dicom files:")
+            st.write("• Select files you want to process")
+            st.write("• Draw masks for each")
+            st.write("• Set thresholds for each mask")
+            st.write("• Process all files at once or one by one")
+
+            if st.button("Start Image Selection", type="primary"):
                 st.session_state["current_step"] = "file_selection"
                 st.rerun()
-        
-        with col2:
-            st.subheader("📄 Single File Processing")
-            st.write("Process one file at a time (original mode):")
-            st.write("• Select one file")
-            st.write("• Draw mask")
-            st.write("• Set threshold")
-            st.write("• Process file")
-            
-            if st.button("Start Single File Processing"):
-                st.session_state["current_step"] = "draw"
-                st.rerun()
-    
-    # Single file processing (original workflow)
-    elif st.session_state["current_step"] == "draw":
-        draw_step()
-    elif st.session_state["current_step"] == "threshold":
-        threshold_step()
-    elif st.session_state["current_step"] == "process":
-        process_step()
     
     # Batch processing workflow
     elif st.session_state["current_step"] == "file_selection":
@@ -91,14 +71,6 @@ def main():
                 st.write("**Step:** Setting Thresholds")
             elif current_step == "batch_process":
                 st.write("**Step:** Processing Files")
-        elif current_step in ["draw", "threshold", "process"]:
-            st.write("**Mode:** Single File")
-            if current_step == "draw":
-                st.write("**Step:** Drawing Mask")
-            elif current_step == "threshold":
-                st.write("**Step:** Setting Threshold")
-            elif current_step == "process":
-                st.write("**Step:** Processing File")
         elif current_step == "file_selection":
             st.write("**Mode:** Batch Processing")
             st.write("**Step:** File Selection")
