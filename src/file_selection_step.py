@@ -39,7 +39,7 @@ def file_selection_step():
             # process concluído: tem mask.nii
             mask_path = os.path.join(folder_path, "dense_mask", "mask.nii")
             if os.path.exists(mask_path):
-                actual_progress["process"].append(folder_name)
+                actual_progress["process"].append(folder_name)         
 
     st.session_state["batch_completed_files"] = actual_progress
 
@@ -65,9 +65,7 @@ def file_selection_step():
         return
     
     # Get already processed files
-    already_done_files = []
-    if os.path.exists(output_folder):
-        already_done_files = os.listdir(output_folder)
+    already_done_files = actual_progress["process"]
     
     # Show file selection
     st.write("### Available Files:")
@@ -96,8 +94,19 @@ def file_selection_step():
     # Show selected files info
     st.write(f"### Selected {len(selected_files)} files:")
     for i, file in enumerate(selected_files, 1):
-        status = "✅ Processed" if file.split('.')[0] in already_done_files else "⏳ Pending"
+        file_name = file.split('.')[0]
+
+        if file_name in actual_progress["process"]:
+            status = "✅ Processed"
+        elif file_name in actual_progress["threshold"]:
+            status = "⏳ Pending - Processing"
+        elif file_name in actual_progress["draw"]:
+            status = "⏳ Pending - Threshold"
+        else:
+            status = "⏳ Pending - Not started yet"
+
         st.write(f"{i}. `{file}` - {status}")
+
     
     st.session_state["batch_files"] = selected_files # update session while selecting files
     # Start batch processing button
