@@ -115,6 +115,7 @@ def file_selection_step():
         st.divider()
         st.write("### Current Batch Progress:")
         batch_files_without_extension = [f.split('.')[0] for f in st.session_state["batch_files"]]
+        st.session_state["batch_files_without_extension"] = batch_files_without_extension
         total_files = len(batch_files_without_extension)
         
         # Draw step progress
