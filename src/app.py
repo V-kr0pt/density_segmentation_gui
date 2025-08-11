@@ -1,6 +1,3 @@
-from draw_step import draw_step
-from threshold_step import threshold_step
-from process_step import process_step
 from file_selection_step import file_selection_step
 from batch_draw_step import batch_draw_step
 from batch_threshold_step import batch_threshold_step
