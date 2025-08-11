@@ -20,12 +20,12 @@ def file_selection_step():
             if not os.path.isdir(folder_path):
                 continue
 
-            # threshold concluído: tem dense.nii
+            # draw concluded if there is dense.nii
             dense_path = os.path.join(folder_path, "dense.nii")
             if os.path.exists(dense_path):
                 actual_progress["draw"].append(folder_name)
             
-            # threshold concluído: tem threshold.json
+            # threshold concluded if there is threshold.json
             threshold_json = os.path.join(folder_path, "threshold.json")
             if os.path.exists(threshold_json):
                 try:
@@ -36,7 +36,7 @@ def file_selection_step():
                 except Exception as e:
                     st.warning(f"Could not read threshold for {folder_name}: {e}")            
 
-            # process concluído: tem mask.nii
+            # process concluded if there is tem mask.nii
             mask_path = os.path.join(folder_path, "dense_mask", "mask.nii")
             if os.path.exists(mask_path):
                 actual_progress["process"].append(folder_name)         
