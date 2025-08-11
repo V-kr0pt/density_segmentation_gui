@@ -18,7 +18,8 @@ def batch_draw_step():
     
     batch_files = st.session_state["batch_files"]
     current_index = st.session_state.get("batch_current_index", 0)
-    completed_draw = st.session_state["batch_completed_files"]["draw"]
+    all_completed_draw = st.session_state["batch_completed_files"]["draw"] # return all files that already has a polygon 
+    completed_draw = [f for f in all_completed_draw if f in st.session_state["batch_files_without_extension"]] # only the set of batch files that already has a polygon
     
     # Progress info
     total_files = len(batch_files)
