@@ -169,23 +169,23 @@ def batch_process_step():
         """, unsafe_allow_html=True)
         
         # Show results summary
-        st.write("### Results")
-        for file in batch_files:
-            file_name = file.split('.')[0]
-            output_path = os.path.join(os.getcwd(), 'output', file_name, 'dense_mask')
-            nifti_path = os.path.join(output_path, 'binary_mask.nii')
-            if os.path.exists(nifti_path):
-                st.markdown(f"""
-                <div style="background: #d4edda; padding: 0.5rem; border-radius: 5px; margin: 0.25rem 0; border-left: 3px solid #28a745;">
-                    <strong>✅ {file}</strong> - Output saved successfully
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown(f"""
-                <div style="background: #f8d7da; padding: 0.5rem; border-radius: 5px; margin: 0.25rem 0; border-left: 3px solid #dc3545;">
-                    <strong>❌ {file}</strong> - Output file not found
-                </div>
-                """, unsafe_allow_html=True)
+        #st.write("### Results")
+        #for file in batch_files:
+            #file_name = file.split('.')[0]
+            #output_path = os.path.join(os.getcwd(), 'output', file_name, 'dense_mask')
+            #nifti_path = os.path.join(output_path, 'binary_mask.nii')
+            #if os.path.exists(nifti_path):
+               # st.markdown(f"""
+                #<div style="background: #d4edda; padding: 0.5rem; border-radius: 5px; margin: 0.25rem 0; border-left: 3px solid #28a745;">
+                    #<strong>✅ {file}</strong> - Output saved successfully
+                #</div>
+                #""", unsafe_allow_html=True)
+            #else:
+                #st.markdown(f"""
+                #<div style="background: #f8d7da; padding: 0.5rem; border-radius: 5px; margin: 0.25rem 0; border-left: 3px solid #dc3545;">
+                    #<strong>❌ {file}</strong> - Output file not found
+                #</div>
+                #""", unsafe_allow_html=True)
         
         if st.button("🔄 Start New Batch"):
             # Clear all batch-related session state
