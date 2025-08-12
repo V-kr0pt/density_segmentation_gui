@@ -4,7 +4,7 @@ import json
 
 def file_selection_step():
     st.header("Batch File Selection")
-    st.write("Select the .nii files you want to process in batch.")
+    st.write("Select the .nii files or .dicom folder you want to process.")
     
     input_folder = os.path.join(os.getcwd(), 'media')
     output_folder = os.path.join(os.getcwd(), 'output')
@@ -58,10 +58,20 @@ def file_selection_step():
     # ---------------------------------------------------
 
     # Get all .nii files
-    available_files = [f for f in os.listdir(input_folder) if f.endswith('.nii')]
+    all_files_inside_input = os.listdir(input_folder)
+    all_nii_files = [f for f in all_files_inside_input if f.endswith('.nii')]
+    all_dicom_folders = [f for f in all_files_inside_input if os.path.isdir(os.path.join(input_folder, f))]
+    # check if there are .dicom files inside the folder
+    all_dicom_folders = [f for f in all_dicom_folders if any(
+        file.endswith('.dicom') or file.endswith('.dcm') 
+        for file in os.listdir(os.path.join(input_folder, f))
+    )]
+
+    available_files = all_nii_files + all_dicom_folders
     
-    if len(available_files) == 0:
-        st.warning(f"No .nii files found in {input_folder}")
+    if len(available_files) == 0 and len(all_dicom_folders) == 0:
+        st.warning(f"No .nii files or .dicom folders found in {input_folder}")
+        st.warning("please upload .nii files or a folder with files with .dicom or .dcm suffix")
         return
     
     # Get already processed files
