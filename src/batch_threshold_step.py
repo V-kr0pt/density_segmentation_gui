@@ -115,7 +115,7 @@ def batch_threshold_step():
         return
     
     try:
-        img = ImageOperations.load_nii_central_slice(original_image_path)
+        img = ImageOperations.load_central_slice_any(original_image_path)
         msk = ImageOperations.load_nii_central_slice(mask_path, flip=True)
     except Exception as e:
         st.error(f"Error loading images: {str(e)}")
