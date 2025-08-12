@@ -1,5 +1,6 @@
 import nibabel as nib
 import pydicom
+import tempfile
 import numpy as np
 from PIL import Image 
 import matplotlib.pyplot as plt
@@ -94,8 +95,26 @@ class ImageOperations:
             return ImageOperations.load_nii_central_slice(file_path, dtype=dtype, flip=flip)
         else:
             raise ValueError(f"Formato não suportado: {file_path}")
-
-
+    
+    @staticmethod
+    def load_dicom_slice(file_path, slice_index, dtype=np.float32):
+        # found the slice index in the dicom folder
+        if not os.path.isdir(file_path):
+            raise ValueError(f"Expected a directory for DICOM files, got: {file_path}")
+        dicom_files = [os.path.join(file_path, f) for f in os.listdir(file_path)
+                       if f.lower().endswith(('.dcm', '.dicom'))]
+        if not dicom_files:
+            raise FileNotFoundError(f"No DICOM files found in {file_path}")
+        
+        dicoms = [pydicom.dcmread(f) for f in dicom_files]
+        dicoms.sort(key=lambda d: int(getattr(d, "InstanceNumber", 0)))
+        if slice_index < 0 or slice_index >= len(dicoms):
+            raise IndexError(f"Slice index {slice_index} out of range for {len(dicoms)} slices.")
+        slice_data = dicoms[slice_index].pixel_array.astype(dtype)
+        slice_data = np.rot90(slice_data, k=-1)  # Rotate the slice
+        slice_data = np.flip(slice_data, axis=1)  # Flip the slice if needed
+        return slice_data
+        
     @staticmethod
     def load_nii_slice(file_path, slice_index, dtype=np.float32):
         nii_obj = nib.load(file_path)
@@ -103,7 +122,17 @@ class ImageOperations:
         slice_data = nii_data[slice_index, :, :]
         del nii_data, nii_obj
         gc.collect()
-        return slice_data.astype(dtype)
+        slice_data = slice_data.astype(dtype)
+        slice_data = np.flip(slice_data, axis=1)  # Flip the slice if needed
+        return slice_data
+    
+    def load_any_slice(file_path, slice_index, dtype=np.float32):
+        if file_path.lower().endswith('.nii'):
+            return ImageOperations.load_nii_slice(file_path, slice_index, dtype=dtype)
+        elif os.path.isdir(file_path):
+            return ImageOperations.load_dicom_slice(file_path, slice_index, dtype=dtype)
+        else:
+            raise ValueError(f"Unsupported file format: {file_path}")
 
     @staticmethod
     def display_thresholded_slice(img, mask, threshold):
