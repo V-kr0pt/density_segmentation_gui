@@ -1,4 +1,5 @@
 import nibabel as nib
+import pydicom
 import numpy as np
 from PIL import Image 
 import matplotlib.pyplot as plt
@@ -48,9 +49,52 @@ class ImageOperations:
 
     @staticmethod
     def load_image(file_path):
-        slice_image, affine, nb_of_slices = ImageOperations.load_nii_central_slice_lazy(file_path)
+        if file_path.endswith('.nii'):
+            slice_image, affine, nb_of_slices = ImageOperations.load_nii_central_slice_lazy(file_path)
+        else:
+            slice_image, affine, nb_of_slices = ImageOperations.load_dicom_central_slice_lazy(file_path)
+
         norm_image = ImageOperations.normalize_image(slice_image)
+
         return cv2.cvtColor(norm_image, cv2.COLOR_GRAY2RGB), affine, nb_of_slices
+
+    @staticmethod
+    def load_dicom_central_slice_lazy(folder_path, dtype=np.float32, flip=False):
+        """
+        Carrega o slice central de uma série DICOM armazenada em uma pasta.
+        Retorna (slice_normalizado_RGB, affine_fake, nb_of_slices).
+        """
+        # Lista de arquivos DICOM
+        dicom_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path)
+                       if f.lower().endswith(('.dcm', '.dicom'))]
+
+        if len(dicom_files) == 0:
+            raise FileNotFoundError(f"No dicom found files in {folder_path}")
+
+        # Ordering by InstanceNumber if it exists
+        dicoms = [pydicom.dcmread(f) for f in dicom_files]
+        dicoms.sort(key=lambda d: int(getattr(d, "InstanceNumber", 0)))
+
+        nb_of_slices = len(dicoms)
+        central_index = nb_of_slices // 2
+        central_slice = dicoms[central_index].pixel_array.astype(dtype)
+        central_slice = np.rot90(central_slice, k=-1)  # Rotate the slice for vertical orientation
+        if flip:
+            central_slice = np.flip(central_slice, axis=0)
+
+        return central_slice, np.eye(4), nb_of_slices
+    
+
+    @staticmethod
+    def load_central_slice_any(file_path, dtype=np.float32, flip=False):
+        if os.path.isdir(file_path):
+            central_slice, _, _ = ImageOperations.load_dicom_central_slice_lazy(file_path, dtype=dtype, flip=flip)
+            return np.rot90(central_slice)
+        elif file_path.lower().endswith(".nii"):
+            return ImageOperations.load_nii_central_slice(file_path, dtype=dtype, flip=flip)
+        else:
+            raise ValueError(f"Formato não suportado: {file_path}")
+
 
     @staticmethod
     def load_nii_slice(file_path, slice_index, dtype=np.float32):
