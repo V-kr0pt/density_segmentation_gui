@@ -3,6 +3,7 @@ from batch_draw_step import batch_draw_step
 from batch_threshold_step import batch_threshold_step
 from batch_process_step import batch_process_step
 from sam_main import sam_step, sam_threshold_step, sam_process_step
+from sam_draw_step import sam_draw_step
 from sam_threshold_auto import sam_threshold_auto_step
 from sam_inference import sam_inference_step
 from sam_propagation import sam_propagation_step
@@ -40,9 +41,10 @@ def main():
             st.subheader("SAM2 Processing")
             st.write("AI-powered segmentation with SAM2:")
             st.write("• Select .nii file")
-            st.write("• AI generates masks automatically")
-            st.write("• Interactive prompt-based refinement")
-            st.write("• Advanced segmentation capabilities")
+            st.write("• Draw mask like traditional mode")
+            st.write("• Set threshold for the drawn region")
+            st.write("• Auto-generate bounding box")
+            st.write("• SAM2 AI inference + propagation")
             
             if st.button("Start SAM2 Processing", type="primary"):
                 st.session_state["current_step"] = "sam"
@@ -61,6 +63,8 @@ def main():
     # SAM2 processing workflow
     elif st.session_state["current_step"] == "sam":
         sam_step()
+    elif st.session_state["current_step"] == "sam_draw":
+        sam_draw_step()
     elif st.session_state["current_step"] == "sam_threshold":
         sam_threshold_step()
     elif st.session_state["current_step"] == "sam_threshold_auto":
@@ -102,11 +106,15 @@ def main():
                 st.write("**Step:** Setting Thresholds")
             elif current_step == "batch_process":
                 st.write("**Step:** Processing Files")
-        elif current_step in ["sam", "sam_threshold", "sam_threshold_auto", "sam_inference", "sam_process", "sam_propagation"]:
+        elif current_step in ["sam", "sam_draw", "sam_threshold", "sam_threshold_auto", "sam_inference", "sam_process", "sam_propagation"]:
             st.write("**Mode:** SAM2 Processing")
             if current_step == "sam":
                 st.write("**Step:** File Selection")
-            elif current_step in ["sam_threshold", "sam_threshold_auto"]:
+            elif current_step == "sam_draw":
+                st.write("**Step:** Drawing Mask")
+            elif current_step == "sam_threshold":
+                st.write("**Step:** Setting Threshold")
+            elif current_step == "sam_threshold_auto":
                 st.write("**Step:** Auto Threshold Analysis")
             elif current_step == "sam_inference":
                 st.write("**Step:** SAM2 Inference")

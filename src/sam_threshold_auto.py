@@ -94,33 +94,53 @@ def sam_threshold_auto_step():
     st.write(f"### Processing: `{st.session_state['sam_selected_file']}`")
     
     try:
-        # Load the image and create initial mask (similar to batch process)
+        # Load the image and use the saved mask from draw step
         image, affine, nb_of_slices = ImageOperations.load_image(file_path)
         
-        # For automatic processing, we need to create a basic mask
-        # This is a simplified approach - in practice, you might want to use
-        # a different method to identify regions of interest
-        st.info("🔄 Generating automatic threshold analysis...")
+        # Load the mask created in the draw step
+        output_path = os.path.join(os.getcwd(), 'output', file_name)
+        mask_path = os.path.join(output_path, 'dense.nii')
         
-        # Use a hardcoded threshold for automatic processing
-        auto_threshold = st.slider("Auto Threshold Value", 0.0, 1.0, 0.45, 0.01, 
-                                 help="This threshold will be used to detect regions for SAM2 processing")
+        if not os.path.exists(mask_path):
+            st.error("No mask found. Please complete the draw step first.")
+            if st.button("← Back to Draw Step"):
+                st.session_state["current_step"] = "sam_draw"
+                st.rerun()
+            return
         
-        # Load central slice for analysis
+        # Load the saved threshold
+        threshold_json = os.path.join(output_path, "threshold.json")
+        auto_threshold = 0.45  # Default fallback
+        
+        if os.path.exists(threshold_json):
+            try:
+                import json
+                with open(threshold_json, "r") as f:
+                    data = json.load(f)
+                    auto_threshold = data.get("threshold", 0.45)
+                st.success(f"Using saved threshold: {auto_threshold:.3f}")
+            except:
+                st.warning("Could not load saved threshold, using default: 0.45")
+        else:
+            st.warning("No saved threshold found, using default: 0.45")
+        
+        st.info(f"🔄 Using threshold {auto_threshold:.3f} for bounding box detection...")
+        
+        # Load central slice and mask
         central_slice = ImageOperations.load_nii_central_slice(file_path)
+        mask_slice = ImageOperations.load_nii_central_slice(mask_path, flip=True)
         
-        # Create a simple density-based mask for demonstration
-        # In practice, this should be replaced with your actual mask generation logic
-        normalized_slice = (central_slice - central_slice.min()) / (central_slice.max() - central_slice.min())
-        
-        # Create binary mask based on threshold
-        binary_mask = (normalized_slice > auto_threshold).astype(np.uint8)
+        # Apply threshold to the mask (not to the original image)
+        binary_mask = (mask_slice > auto_threshold).astype(np.uint8)
         
         # Find bounding box
         bbox = find_bounding_box(binary_mask, padding=20)
         
         if bbox is None:
-            st.error("No region detected with the current threshold. Try adjusting the threshold value.")
+            st.error("No region detected with the current threshold. The drawn mask may be too small or the threshold too high.")
+            if st.button("← Back to Threshold Step"):
+                st.session_state["current_step"] = "sam_threshold"
+                st.rerun()
             return
         
         # Store results
@@ -133,7 +153,7 @@ def sam_threshold_auto_step():
         st.session_state["sam_nb_slices"] = nb_of_slices
         
         # Display results
-        fig = visualize_threshold_and_bbox(central_slice, normalized_slice, auto_threshold, bbox)
+        fig = visualize_threshold_and_bbox(central_slice, mask_slice, auto_threshold, bbox)
         
         st.subheader("Automatic Analysis Results")
         st.pyplot(fig)
@@ -146,19 +166,24 @@ def sam_threshold_auto_step():
         st.write(f"- Height: {bbox[3] - bbox[1]:.0f} pixels")
         
         # Continue button
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
+            if st.button("← Back to Threshold Step"):
+                st.session_state["current_step"] = "sam_threshold"
+                st.rerun()
+        
+        with col2:
             if st.button("✅ Continue to SAM2 Inference", type="primary"):
                 st.session_state["current_step"] = "sam_inference"
                 st.rerun()
         
-        with col2:
-            if st.button("← Back to File Selection"):
-                st.session_state["current_step"] = "sam"
+        with col3:
+            if st.button("🔄 Adjust Threshold"):
+                st.session_state["current_step"] = "sam_threshold"
                 st.rerun()
         
     except Exception as e:
         st.error(f"Error in automatic threshold detection: {str(e)}")
-        if st.button("← Back to File Selection"):
-            st.session_state["current_step"] = "sam"
+        if st.button("← Back to Threshold Step"):
+            st.session_state["current_step"] = "sam_threshold"
             st.rerun()

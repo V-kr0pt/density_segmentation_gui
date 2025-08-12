@@ -36,9 +36,12 @@ def sam_step():
         try:
             preview_image = ImageOperations.load_nii_central_slice(file_path)
             
+            # Normalize image to [0, 1] range for display
+            normalized_preview = (preview_image - preview_image.min()) / (preview_image.max() - preview_image.min())
+            
             col1, col2, col3 = st.columns([1, 2, 1])
             with col2:
-                st.image(preview_image, caption=f"Central slice of {selected_file}", use_container_width=True)
+                st.image(normalized_preview, caption=f"Central slice of {selected_file}", use_container_width=True, clamp=True)
             
         except Exception as e:
             st.error(f"Error loading preview: {str(e)}")
@@ -73,15 +76,15 @@ def sam_step():
             st.session_state["sam_file_path"] = os.path.join(input_folder, selected_file)
             st.session_state["sam_file_name"] = selected_file.split('.')[0]
             
-            # Move to threshold auto step
-            st.session_state["current_step"] = "sam_threshold_auto"
+            # Move to draw step (similar to batch process)
+            st.session_state["current_step"] = "sam_draw"
             st.rerun()
         else:
             st.warning("Please select a file first.")
 
 def sam_threshold_step():
-    """Manual threshold step - not used in automatic pipeline but kept for compatibility"""
-    st.header("SAM2 Processing - Threshold Selection")
+    """Manual threshold step for SAM2 - similar to batch_threshold_step but for single file"""
+    st.header("SAM2 Processing - Step 2: Adjust Threshold")
     
     if "sam_selected_file" not in st.session_state:
         st.error("No file selected. Please go back to file selection.")
@@ -90,15 +93,99 @@ def sam_threshold_step():
             st.rerun()
         return
     
-    st.info("This step is skipped in automatic SAM2 processing.")
-    st.write("The system will automatically use a threshold of 0.45 for bounding box detection.")
+    selected_file = st.session_state["sam_selected_file"]
+    file_path = st.session_state["sam_file_path"]
+    file_name = st.session_state["sam_file_name"]
     
-    if st.button("➡️ Continue to Auto Threshold"):
-        st.session_state["current_step"] = "sam_threshold_auto"
-        st.rerun()
+    st.write(f"### Processing threshold for: `{selected_file}`")
     
-    if st.button("← Back to File Selection"):
-        st.session_state["current_step"] = "sam"
+    # Process current file
+    input_folder = os.path.join(os.getcwd(), 'media')
+    output_path = os.path.join(os.getcwd(), 'output', file_name)
+    mask_path = os.path.join(output_path, 'dense.nii')
+    original_image_path = file_path
+    
+    # Check if required files exist
+    if not os.path.exists(mask_path):
+        st.error(f"Mask file not found: {mask_path}")
+        st.write("This file may not have completed the draw step properly.")
+        if st.button("← Back to Draw Step"):
+            st.session_state["current_step"] = "sam_draw"
+            st.rerun()
+        return
+    
+    try:
+        from utils import ImageOperations, ThresholdOperations
+        import io
+        import json
+        
+        img = ImageOperations.load_nii_central_slice(original_image_path)
+        msk = ImageOperations.load_nii_central_slice(mask_path, flip=True)
+    except Exception as e:
+        st.error(f"Error loading images: {str(e)}")
+        if st.button("← Back to Draw Step"):
+            st.session_state["current_step"] = "sam_draw"
+            st.rerun()
+        return
+    
+    # Display options
+    width_options = [400, 500, 600, 700, 800, 900, 1000]
+    selected_width = st.selectbox("Select image width", width_options, index=2, key="sam_width")
+    
+    # Threshold slider
+    threshold_key = "sam_threshold_slider"
+    
+    # Check if threshold already saved
+    threshold_json = os.path.join(output_path, "threshold.json")
+    default_threshold = 0.38
+    if os.path.exists(threshold_json):
+        try:
+            with open(threshold_json, "r") as f:
+                data = json.load(f)
+                default_threshold = data.get("threshold", 0.38)
+        except:
+            pass
+    
+    threshold = st.slider(
+        "Select threshold value",
+        min_value=0.0,
+        max_value=1.0,
+        value=default_threshold,
+        step=0.01,
+        key=threshold_key
+    )
+    
+    # Display thresholded image
+    fig = ThresholdOperations.display_thresholded_slice(img, msk, threshold)
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
+    buf.seek(0)
+    
+    cols = st.columns([1, 1, 1])
+    with cols[1]:
+        st.image(buf, caption="Thresholded Central Slice", width=selected_width)
+    
+    # Save button
+    if st.button("💾 Save Threshold and Continue to Auto Processing"):
+        # Save threshold to disk
+        try:
+            os.makedirs(output_path, exist_ok=True)
+            with open(threshold_json, "w") as f:
+                json.dump({"threshold": threshold}, f)
+
+            st.session_state["sam_final_threshold"] = threshold
+            st.success(f"Threshold {threshold:.2f} saved for {selected_file}!")
+            
+            # Move to auto threshold detection for SAM2
+            st.session_state["current_step"] = "sam_threshold_auto"
+            st.rerun()
+        
+        except Exception as e:
+            st.error(f"Could not save threshold for {file_name}: {e}")
+    
+    # Back button
+    if st.button("← Back to Draw Step"):
+        st.session_state["current_step"] = "sam_draw"
         st.rerun()
 
 def sam_process_step():
