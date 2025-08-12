@@ -5,11 +5,11 @@ import os
 import streamlit as st
 import numpy as np
 from PIL import Image
-from sam_utils import SAM2Manager, convert_nii_slice_for_sam2
+from sam_utils import SAM2Manager, convert_nii_slice_for_sam2, convert_nii_slice_with_threshold_overlay_for_sam2
 import matplotlib.pyplot as plt
 import cv2
 
-def visualize_sam2_results(image, masks, scores, bbox):
+def visualize_sam2_results(image, masks, scores, bbox, threshold_overlay_image=None):
     """
     Visualize SAM2 inference results
     """
@@ -17,14 +17,27 @@ def visualize_sam2_results(image, masks, scores, bbox):
     if len(masks) == 1:
         axes = [axes]
     
-    # Original image with bounding box
-    axes[0].imshow(image, cmap='gray')
-    if bbox is not None:
+    # Show the threshold overlay image if provided (what SAM2 actually sees)
+    if threshold_overlay_image is not None:
+        axes[0].imshow(threshold_overlay_image)
+        axes[0].set_title('SAM2 Input (with threshold overlay)')
+    else:
+        # Fallback to original image with bounding box
+        axes[0].imshow(image, cmap='gray')
+        if bbox is not None:
+            from matplotlib.patches import Rectangle
+            rect = Rectangle((bbox[0], bbox[1]), bbox[2]-bbox[0], bbox[3]-bbox[1], 
+                            linewidth=2, edgecolor='red', facecolor='none')
+            axes[0].add_patch(rect)
+        axes[0].set_title('Input + Bounding Box')
+    
+    # Add bounding box to threshold overlay if provided
+    if threshold_overlay_image is not None and bbox is not None:
         from matplotlib.patches import Rectangle
         rect = Rectangle((bbox[0], bbox[1]), bbox[2]-bbox[0], bbox[3]-bbox[1], 
-                        linewidth=2, edgecolor='red', facecolor='none')
+                        linewidth=2, edgecolor='yellow', facecolor='none')
         axes[0].add_patch(rect)
-    axes[0].set_title('Input + Bounding Box')
+    
     axes[0].axis('off')
     
     # Show up to 3 best masks
@@ -54,7 +67,16 @@ def sam_inference_step():
     
     file_name = st.session_state["sam_file_name"]
     central_slice = st.session_state["sam_central_slice"]
+    mask_slice = st.session_state.get("sam_mask_slice")
+    threshold = st.session_state.get("sam_threshold", 0.45)
     bbox = st.session_state["sam_bounding_box"]
+    
+    if mask_slice is None:
+        st.error("Mask slice not found. Please complete the threshold detection step first.")
+        if st.button("← Back to Threshold Detection"):
+            st.session_state["current_step"] = "sam_threshold_auto"
+            st.rerun()
+        return
     
     st.write(f"### Running SAM2 inference on: `{st.session_state['sam_selected_file']}`")
     
@@ -71,8 +93,11 @@ def sam_inference_step():
         st.success(message)
     
     # Prepare image for SAM2
-    with st.spinner("Preparing image for inference..."):
-        sam2_image = convert_nii_slice_for_sam2(central_slice)
+    with st.spinner("Preparing image with threshold overlay for inference..."):
+        # Use the new function that combines original image with threshold overlay
+        sam2_image = convert_nii_slice_with_threshold_overlay_for_sam2(
+            central_slice, mask_slice, threshold, overlay_alpha=0.3
+        )
         
         # Set image in predictor
         success, message = sam_manager.set_image(sam2_image)
@@ -93,11 +118,12 @@ def sam_inference_step():
     # Display results
     st.subheader("SAM2 Inference Results")
     
-    fig = visualize_sam2_results(central_slice, masks, scores, bbox)
+    fig = visualize_sam2_results(central_slice, masks, scores, bbox, threshold_overlay_image=sam2_image)
     st.pyplot(fig)
     
     # Show inference details
     st.write("**Inference Details:**")
+    st.write(f"- Input method: Original image with threshold overlay (threshold: {threshold:.3f})")
     st.write(f"- Number of masks generated: {len(masks)}")
     st.write(f"- Best mask score: {scores[0]:.3f}")
     st.write(f"- Input bounding box: [{bbox[0]:.0f}, {bbox[1]:.0f}, {bbox[2]:.0f}, {bbox[3]:.0f}]")

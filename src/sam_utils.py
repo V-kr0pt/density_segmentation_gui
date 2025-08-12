@@ -188,3 +188,39 @@ def convert_nii_slice_for_sam2(nii_slice):
         rgb_image = normalized
     
     return rgb_image
+
+def convert_nii_slice_with_threshold_overlay_for_sam2(nii_slice, mask_slice, threshold, overlay_alpha=0.3):
+    """
+    Convert a NII slice with threshold overlay to SAM2 compatible format
+    
+    Args:
+        nii_slice: Original image slice
+        mask_slice: Mask slice 
+        threshold: Threshold value to apply
+        overlay_alpha: Alpha value for overlay (0.0 to 1.0)
+    
+    Returns:
+        RGB image with threshold overlay for SAM2
+    """
+    # Normalize original image to 0-255
+    normalized_img = ((nii_slice - nii_slice.min()) / (nii_slice.max() - nii_slice.min()) * 255).astype(np.uint8)
+    
+    # Apply threshold to mask
+    from utils import ThresholdOperations
+    binary_mask = ThresholdOperations.apply_threshold(nii_slice, mask_slice, threshold)
+    
+    # Convert to RGB
+    rgb_image = cv2.cvtColor(normalized_img, cv2.COLOR_GRAY2RGB)
+    
+    # Create overlay - use jet colormap for the thresholded region
+    overlay = np.zeros_like(rgb_image)
+    
+    # Apply jet colormap to binary mask
+    if np.any(binary_mask):
+        # Create colored overlay for the masked region
+        overlay[binary_mask] = [255, 0, 0]  # Red overlay for thresholded regions
+    
+    # Blend original image with overlay
+    blended = cv2.addWeighted(rgb_image, 1.0 - overlay_alpha, overlay, overlay_alpha, 0)
+    
+    return blended

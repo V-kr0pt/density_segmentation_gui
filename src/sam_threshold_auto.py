@@ -146,6 +146,7 @@ def sam_threshold_auto_step():
         # Store results
         st.session_state["sam_threshold"] = auto_threshold
         st.session_state["sam_central_slice"] = central_slice
+        st.session_state["sam_mask_slice"] = mask_slice  # Add mask slice to session
         st.session_state["sam_binary_mask"] = binary_mask
         st.session_state["sam_bounding_box"] = bbox
         st.session_state["sam_image_data"] = image

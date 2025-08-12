@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image
 import tempfile
 import shutil
-from sam_utils import SAM2Manager, convert_nii_slice_for_sam2
+from sam_utils import SAM2Manager, convert_nii_slice_for_sam2, convert_nii_slice_with_threshold_overlay_for_sam2
 from utils import ImageOperations
 import matplotlib.pyplot as plt
 
@@ -18,12 +18,15 @@ try:
 except ImportError:
     SAM2_VIDEO_AVAILABLE = False
 
-def prepare_video_frames(image_data, temp_dir):
+def prepare_video_frames(image_data, mask_data, threshold, temp_dir):
     """
     Convert 3D medical image to individual frame files for SAM2 video processing
+    with threshold overlay
     
     Args:
         image_data: 3D numpy array (slices, height, width)
+        mask_data: 3D numpy array (slices, height, width) - mask data
+        threshold: float - threshold value to apply
         temp_dir: Temporary directory to save frames
     
     Returns:
@@ -32,11 +35,14 @@ def prepare_video_frames(image_data, temp_dir):
     frame_names = []
     
     for slice_idx in range(image_data.shape[2]):  # Assuming slices are the 3rd dimension
-        # Extract slice
+        # Extract slice and mask
         slice_2d = image_data[:, :, slice_idx]
+        mask_slice_2d = mask_data[:, :, slice_idx]
         
-        # Convert to SAM2 format
-        sam2_frame = convert_nii_slice_for_sam2(slice_2d)
+        # Convert to SAM2 format with threshold overlay
+        sam2_frame = convert_nii_slice_with_threshold_overlay_for_sam2(
+            slice_2d, mask_slice_2d, threshold, overlay_alpha=0.3
+        )
         
         # Save as image file
         frame_name = f"frame_{slice_idx:04d}.jpg"
@@ -111,12 +117,31 @@ def sam_propagation_step():
     
     file_name = st.session_state["sam_file_name"]
     image_data = st.session_state["sam_image_data"]
+    threshold = st.session_state.get("sam_threshold", 0.45)
     best_mask = st.session_state["sam_best_mask"]
     bbox = st.session_state["sam_bounding_box"]
     inference_frame_idx = st.session_state.get("sam_inference_frame", 0)
     
+    # Load mask data for all slices
+    output_path = os.path.join(os.getcwd(), 'output', file_name)
+    mask_path = os.path.join(output_path, 'dense.nii')
+    
+    if not os.path.exists(mask_path):
+        st.error("Mask file not found. Please complete the draw step first.")
+        if st.button("← Back to Draw Step"):
+            st.session_state["current_step"] = "sam_draw"
+            st.rerun()
+        return
+    
+    try:
+        mask_data, _, _ = ImageOperations.load_image(mask_path)
+    except Exception as e:
+        st.error(f"Error loading mask data: {str(e)}")
+        return
+    
     st.write(f"### Propagating segmentation across all slices: `{st.session_state['sam_selected_file']}`")
     st.write(f"**Total slices to process:** {image_data.shape[2]}")
+    st.write(f"**Method:** Using original images with threshold overlay (threshold: {threshold:.3f})")
     
     # Create temporary directory for video frames
     if "sam_temp_dir" not in st.session_state:
@@ -126,10 +151,10 @@ def sam_propagation_step():
     
     try:
         # Prepare video frames
-        with st.spinner("Preparing video frames from medical image slices..."):
-            frame_names = prepare_video_frames(image_data, temp_dir)
+        with st.spinner("Preparing video frames with threshold overlay from medical image slices..."):
+            frame_names = prepare_video_frames(image_data, mask_data, threshold, temp_dir)
             st.session_state["sam_frame_names"] = frame_names
-            st.success(f"Prepared {len(frame_names)} frames")
+            st.success(f"Prepared {len(frame_names)} frames with threshold overlay (threshold: {threshold:.3f})")
         
         # Initialize video predictor
         with st.spinner("Initializing SAM2 video predictor..."):
