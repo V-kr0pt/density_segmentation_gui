@@ -6,3 +6,4 @@ output/*
 DBT-P00125
 *.ipynb
 venv
+media/*
