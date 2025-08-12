@@ -3,8 +3,77 @@ import streamlit as st
 import json
 
 def file_selection_step():
-    st.header("Batch File Selection")
-    st.write("Select the .nii files or .dicom folder you want to process.")
+    st.header("📁 Step 1: Select Files")
+    
+    # Add consistent CSS styling
+    st.markdown("""
+    <style>
+    .step-container {
+        background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+        color: #2d3436;
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 8px rgba(168, 237, 234, 0.3);
+        border-left: 3px solid #00b894;
+    }
+    .step-container h3 {
+        margin: 0 0 0.5rem 0;
+        font-size: 1.2rem;
+        color: #2d3436;
+    }
+    .step-container p {
+        margin: 0;
+        font-size: 0.9rem;
+        color: #2d3436;
+    }
+    .progress-section {
+        background: #ffffff;
+        padding: 1rem;
+        border-radius: 8px;
+        border: 1px solid #e9ecef;
+        margin: 0.5rem 0;
+        box-shadow: 0 1px 5px rgba(0,0,0,0.05);
+    }
+    .file-item {
+        background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+        color: #2d3436;
+        padding: 0.75rem;
+        border-radius: 6px;
+        margin: 0.3rem 0;
+        border-left: 3px solid #00b894;
+        font-size: 0.9rem;
+        box-shadow: 0 2px 8px rgba(168, 237, 234, 0.3);
+    }
+    .file-status {
+        padding: 0.5rem;
+        border-radius: 6px;
+        margin: 0.3rem 0;
+        font-size: 0.85rem;
+    }
+    .status-complete {
+        background: linear-gradient(135deg, #00b894 0%, #55efc4 100%);
+        color: white;
+    }
+    .status-partial {
+        background: linear-gradient(135deg, #fdcb6e 0%, #e17055 100%);
+        color: white;
+    }
+    .status-pending {
+        background: linear-gradient(135deg, #ddd 0%, #f1f2f6 100%);
+        color: #2d3436;
+    }
+    .compact-section {
+        margin: 0.5rem 0;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("""
+    <div class="step-container">
+        <p>Choose NIfTI (.nii) files or DICOM folders for batch processing.</p>
+    </div>
+    """, unsafe_allow_html=True)
     
     input_folder = os.path.join(os.getcwd(), 'media')
     output_folder = os.path.join(os.getcwd(), 'output')
@@ -70,15 +139,15 @@ def file_selection_step():
     available_files = all_nii_files + all_dicom_folders
     
     if len(available_files) == 0 and len(all_dicom_folders) == 0:
-        st.warning(f"No .nii files or .dicom folders found in {input_folder}")
-        st.warning("please upload .nii files or a folder with files with .dicom or .dcm suffix")
+        st.warning(f"No files found in {input_folder}")
+        st.info("Please upload NIfTI (.nii) files or folders containing DICOM (.dicom/.dcm) files")
         return
     
     # Get already processed files
     already_done_files = actual_progress["process"]
     
     # Show file selection
-    st.write("### Available Files:")
+    st.write("### Available Files")
     
     # Option to show only unprocessed files
     show_only_unprocessed = st.checkbox("Show only unprocessed files", value=True)
@@ -102,25 +171,36 @@ def file_selection_step():
         return
     
     # Show selected files info
-    st.write(f"### Selected {len(selected_files)} files:")
+    #st.markdown('<div class="progress-section">', unsafe_allow_html=True)
+    st.write(f"### Selected Files ({len(selected_files)})")
     for i, file in enumerate(selected_files, 1):
         file_name = file.split('.')[0]
 
         if file_name in actual_progress["process"]:
-            status = "✅ Processed"
+            status = "✅ Completed"
+            color = "#28a745"
         elif file_name in actual_progress["threshold"]:
-            status = "⏳ Pending - Processing"
+            status = "⏳ Ready for Processing"
+            color = "#ffc107"
         elif file_name in actual_progress["draw"]:
-            status = "⏳ Pending - Threshold"
+            status = "⏳ Ready for Threshold"
+            color = "#17a2b8"
         else:
-            status = "⏳ Pending - Not started yet"
+            status = "⏳ Not Started"
+            color = "#6c757d"
 
-        st.write(f"{i}. `{file}` - {status}")
+        st.markdown(f"""
+        <div style="background: #f8f9fa; padding: 0.75rem; border-radius: 5px; margin: 0.25rem 0; border-left: 3px solid {color};">
+            <strong>{i}. {file}</strong><br>
+            <span style="color: {color};">{status}</span>
+        </div>
+        """, unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
     
     st.session_state["batch_files"] = selected_files # update session while selecting files
     # Start batch processing button
-    if st.button("🚀 Start Batch Processing", type="primary"):
+    if st.button("Start Batch Processing", type="primary"):
         # Initialize batch processing session state
         #st.session_state["batch_files"] = selected_files
         st.session_state["batch_current_index"] = 0
@@ -132,7 +212,8 @@ def file_selection_step():
     # Show current batch info if in progress
     if "batch_files" in st.session_state:
         st.divider()
-        st.write("### Current Batch Progress:")
+        #st.markdown('<div class="progress-section">', unsafe_allow_html=True)
+        st.write("### Batch Progress")
         batch_files_without_extension = [f.split('.')[0] for f in st.session_state["batch_files"]]
         st.session_state["batch_files_without_extension"] = batch_files_without_extension
         total_files = len(batch_files_without_extension)
@@ -140,22 +221,24 @@ def file_selection_step():
         # Draw step progress
         all_draw_completed = st.session_state["batch_completed_files"]["draw"]
         draw_completed = len([f for f in all_draw_completed if f in batch_files_without_extension])
-        st.progress(draw_completed / total_files, text=f"Draw Step: {draw_completed}/{total_files} completed")
+        st.progress(draw_completed / total_files, text=f"Step 1 - Draw Masks: {draw_completed}/{total_files} completed")
         
         # Threshold step progress
         all_threshold_completed = st.session_state["batch_completed_files"]["threshold"]
         threshold_completed = len([f for f in all_threshold_completed if f in batch_files_without_extension])
-        st.progress(threshold_completed / total_files, text=f"Threshold Step: {threshold_completed}/{total_files} completed")
+        st.progress(threshold_completed / total_files, text=f"Step 2 - Set Thresholds: {threshold_completed}/{total_files} completed")
         
         # Process step progress
         all_process_completed = st.session_state["batch_completed_files"]["process"]
         process_completed = len([f for f in all_process_completed if f in batch_files_without_extension])
-        st.progress(process_completed / total_files, text=f"Process Step: {process_completed}/{total_files} completed")
+        st.progress(process_completed / total_files, text=f"Step 3 - Process Files: {process_completed}/{total_files} completed")
         
-        if st.button("🔄 Reset Batch"):
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        #if st.button("🔄 Reset Batch"):
             # Clear batch-related session state
-            keys_to_remove = [key for key in st.session_state.keys() if key.startswith("batch_")]
-            for key in keys_to_remove:
-                del st.session_state[key]
-            st.session_state["current_step"] = "file_selection"
-            st.rerun()
+            #keys_to_remove = [key for key in st.session_state.keys() if key.startswith("batch_")]
+            #for key in keys_to_remove:
+                #del st.session_state[key]
+            #st.session_state["current_step"] = "file_selection"
+            #st.rerun()

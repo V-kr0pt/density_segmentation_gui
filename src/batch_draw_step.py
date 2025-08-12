@@ -6,7 +6,79 @@ from streamlit_drawable_canvas import st_canvas
 import numpy as np
 
 def batch_draw_step():
-    st.header("Step 1: Draw Masks (Batch Mode)")
+    st.header("🎨 Step 2: Draw Masks")
+    
+    # Add consistent CSS styling
+    st.markdown("""
+    <style>
+    .step-container {
+        background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+        color: #2d3436;
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 8px rgba(168, 237, 234, 0.3);
+        border-left: 3px solid #00b894;
+    }
+    .step-container h3 {
+        margin: 0 0 0.5rem 0;
+        font-size: 1.2rem;
+        color: #2d3436;
+    }
+    .step-container p {
+        margin: 0;
+        font-size: 0.9rem;
+        color: #2d3436;
+    }
+    .progress-section {
+        background: #ffffff;
+        padding: 1rem;
+        border-radius: 8px;
+        border: 1px solid #e9ecef;
+        margin: 0.5rem 0;
+        box-shadow: 0 1px 5px rgba(0,0,0,0.05);
+    }
+    .progress-section h3 {
+        margin: 0 0 0.5rem 0;
+        font-size: 1.1rem;
+    }
+    .current-file {
+        background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+        color: #2d3436;
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 8px rgba(168, 237, 234, 0.3);
+        border-left: 3px solid #00b894;
+    }
+    .current-file h4 {
+        margin: 0 0 0.3rem 0;
+        font-size: 1.1rem;
+        color: #2d3436;
+    }
+    .current-file p {
+        margin: 0;
+        font-size: 0.9rem;
+        color: #2d3436;
+    }
+    .canvas-container {
+        background: #ffffff;
+        padding: 1rem;
+        border-radius: 8px;
+        border: 1px solid #f0f0f0;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    }
+    .canvas-container h3 {
+        margin: 0 0 0.5rem 0;
+        font-size: 1.1rem;
+    }
+    .compact-section {
+        margin: 0.5rem 0;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
     
     # Check if we have batch data
     if "batch_files" not in st.session_state:
@@ -22,15 +94,17 @@ def batch_draw_step():
     completed_draw = [f for f in all_completed_draw if f in st.session_state["batch_files_without_extension"]] # only the set of batch files that already has a polygon
     
     # Progress info
+    #st.markdown('<div class="progress-section">', unsafe_allow_html=True)
     total_files = len(batch_files)
     st.write(f"### Progress: {len(completed_draw)}/{total_files} files completed")
     st.progress(len(completed_draw) / total_files)
+    st.markdown('</div>', unsafe_allow_html=True)
     
     # Find next file to process
     if current_index >= len(batch_files):
         # All files processed for draw step
-        st.success("🎉 All files have been processed for drawing step!")
-        if st.button("➡️ Proceed to Threshold Step"):
+        st.success("🎉 All masks have been drawn!")
+        if st.button("→ Continue to Threshold Step"):
             st.session_state["batch_current_index"] = 0
             st.session_state["current_step"] = "batch_threshold"
             st.rerun()
@@ -48,12 +122,15 @@ def batch_draw_step():
         st.rerun()
         return
     
-    st.write(f"### Currently processing: `{current_file}` ({current_index + 1}/{total_files})")
-    
-    # File navigation
+    st.markdown(f"""
+    <div class="current-file">
+        <h4>📁 {current_file} ({current_index + 1}/{total_files})</h4>
+        <p>💡 Navigate between unsaved files • Saved files are locked</p>
+    </div>
+    """, unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 2, 1])
     with col1:
-        if current_index > 0 and st.button("← Previous File"):
+        if current_index > 0 and st.button("← Previous", help="Navigate to previous unsaved file"):
             st.session_state["batch_current_index"] = current_index - 1
             # Clear current file session state
             keys_to_clear = ["points", "mask", "result", "create_mask", "affine", "original_image_path", "nb_of_slices", "scale", "output_path"]
@@ -64,7 +141,7 @@ def batch_draw_step():
     
     with col3:
         next_file_index = current_index + 1
-        if next_file_index < len(batch_files) and st.button("Next File →"):
+        if next_file_index < len(batch_files) and st.button("Next →", help="Navigate to next unsaved file"):
             st.session_state["batch_current_index"] = next_file_index
             # Clear current file session state
             keys_to_clear = ["points", "mask", "result", "create_mask", "affine", "original_image_path", "nb_of_slices", "scale", "output_path"]
@@ -75,18 +152,14 @@ def batch_draw_step():
     
     # Show completed files list
     if len(completed_draw) > 0:
-        with st.expander(f"Completed files ({len(completed_draw)})"):
-            for file in completed_draw:
-                st.write(f"✅ {file}.nii")
+        with st.expander(f"✅ Completed Files ({len(completed_draw)})", expanded=False):
+            st.caption("*These files are saved and locked*")
+            cols = st.columns(3)
+            for i, file in enumerate(completed_draw):
+                with cols[i % 3]:
+                    st.markdown(f"🔒 **{file}.nii**")
     
-    # Clean section button
-    if st.button("Clean Current File Data"):
-        keys_to_clear = ["points", "mask", "result", "create_mask", "affine", "original_image_path", "nb_of_slices", "scale", "output_path"]
-        for key in keys_to_clear:
-            if key in st.session_state:
-                del st.session_state[key]
-        st.success("Current file data cleared.")
-        st.rerun()
+    st.divider()
     
     # Process current file
     input_folder = os.path.join(os.getcwd(), 'media')
@@ -124,7 +197,9 @@ def batch_draw_step():
     if "points" not in st.session_state:
         st.session_state.points = []
     
-    st.write("Draw a polygon on the image to segment:")
+    # Drawing canvas
+    #st.markdown('<div class="canvas-container">', unsafe_allow_html=True)
+    st.markdown("### 🖌️ Drawing Canvas")
     
     # Adjust canvas size for rotated image
     rotated_width, rotated_height = pil_image.size
@@ -139,6 +214,24 @@ def batch_draw_step():
         drawing_mode="polygon",
         key=f"canvas_{current_file}"  # Unique key per file
     )
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Control buttons in a single row
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("🎨 Create Mask"):
+            st.session_state["create_mask"] = True
+    with col2:
+        if st.button("🗑️ Clear Drawing"):
+            keys_to_clear = ["points", "mask", "result", "create_mask"]
+            for key in keys_to_clear:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.rerun()
+    with col3:
+        if st.button("← Back to File Selection"):
+            st.session_state["current_step"] = "file_selection"
+            st.rerun()
     
     if canvas_result.json_data is not None:
         objects = canvas_result.json_data["objects"]
@@ -150,11 +243,6 @@ def batch_draw_step():
             points = [(rotated_height - y, x) for x, y in points_rotated]
             st.session_state.points = points
     
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Create mask on the selected area"):
-            st.session_state["create_mask"] = True
-    
     if st.session_state.get("create_mask", False):
         if len(st.session_state.points) >= 3:
             result, mask = MaskOperations.create_mask(image, st.session_state.points, reduction_scale=scale)
@@ -164,43 +252,41 @@ def batch_draw_step():
             st.session_state["create_mask"] = False
             st.rerun()
         else:
-            st.warning("Select at least 3 points.")
+            st.warning("Select at least 3 points to create a polygon.")
+            st.session_state["create_mask"] = False
     
     if "result" in st.session_state and "mask" in st.session_state:
-        st.subheader("Mask Preview")
+        st.markdown("### 👁️ Mask Preview")
         col1, col2 = st.columns(2)
         with col1:
             st.image(np.rot90(image), caption="Original Image", use_container_width=True)
         with col2:
             st.image(np.rot90(st.session_state["result"]), caption="Segmented Area", use_container_width=True)
         
-        if st.button("✅ Save Mask and Continue to Next File"):
-            # Save mask exactly as drawn, no rotation or transformation
-            MaskOperations.save_mask(
-                st.session_state["mask"],
-                affine=st.session_state["affine"],
-                nb_of_slices=st.session_state["nb_of_slices"],
-                file_path=st.session_state["output_path"],
-                points=st.session_state["points"],
-                scale=st.session_state["scale"]
-            )
-            
-            # Mark file as completed
-            st.session_state["batch_completed_files"]["draw"].append(current_file_name)
-            
-            # Move to next file
-            st.session_state["batch_current_index"] = current_index + 1
-            
-            # Clear current file session state
-            keys_to_clear = ["points", "mask", "result", "create_mask", "affine", "original_image_path", "nb_of_slices", "scale", "output_path", "current_batch_file"]
-            for key in keys_to_clear:
-                if key in st.session_state:
-                    del st.session_state[key]
-            
-            st.success(f"Mask saved for {current_file}!")
-            st.rerun()
-    
-    # Back button
-    if st.button("← Back to File Selection"):
-        st.session_state["current_step"] = "file_selection"
-        st.rerun()
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            if st.button("💾 Save Mask & Continue", type="primary"):
+                # Save mask exactly as drawn, no rotation or transformation
+                MaskOperations.save_mask(
+                    st.session_state["mask"],
+                    affine=st.session_state["affine"],
+                    nb_of_slices=st.session_state["nb_of_slices"],
+                    file_path=st.session_state["output_path"],
+                    points=st.session_state["points"],
+                    scale=st.session_state["scale"]
+                )
+                
+                # Mark file as completed
+                st.session_state["batch_completed_files"]["draw"].append(current_file_name)
+                
+                # Move to next file
+                st.session_state["batch_current_index"] = current_index + 1
+                
+                # Clear current file session state
+                keys_to_clear = ["points", "mask", "result", "create_mask", "affine", "original_image_path", "nb_of_slices", "scale", "output_path", "current_batch_file"]
+                for key in keys_to_clear:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                
+                st.success(f"Mask saved for {current_file}!")
+                st.rerun()

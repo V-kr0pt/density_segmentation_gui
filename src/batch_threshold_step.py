@@ -5,7 +5,94 @@ import streamlit as st
 from utils import ImageOperations, ThresholdOperations
 
 def batch_threshold_step():
-    st.header("Step 2: Adjust Thresholds (Batch Mode)")
+    st.header("🎯 Step 3: Adjust Thresholds")
+    
+    # Add consistent CSS styling
+    st.markdown("""
+    <style>
+    .step-container {
+        background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+        color: #2d3436;
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 8px rgba(168, 237, 234, 0.3);
+        border-left: 3px solid #00b894;
+    }
+    .step-container h3 {
+        margin: 0 0 0.5rem 0;
+        font-size: 1.2rem;
+        color: #2d3436;
+    }
+    .step-container p {
+        margin: 0;
+        font-size: 0.9rem;
+        color: #2d3436;
+    }
+    .progress-section {
+        background: #ffffff;
+        padding: 1rem;
+        border-radius: 8px;
+        border: 1px solid #e9ecef;
+        margin: 0.5rem 0;
+        box-shadow: 0 1px 5px rgba(0,0,0,0.05);
+    }
+    .progress-section h3 {
+        margin: 0 0 0.5rem 0;
+        font-size: 1.1rem;
+    }
+    .current-file {
+        background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+        color: #2d3436;
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 8px rgba(168, 237, 234, 0.3);
+        border-left: 3px solid #00b894;
+    }
+    .current-file h4 {
+        margin: 0 0 0.3rem 0;
+        font-size: 1.1rem;
+        color: #2d3436;
+    }
+    .current-file p {
+        margin: 0;
+        font-size: 0.9rem;
+        color: #2d3436;
+    }
+    .threshold-container {
+        background: #ffffff;
+        padding: 1rem;
+        border-radius: 8px;
+        border: 1px solid #f0f0f0;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    }
+    .threshold-container h3 {
+        margin: 0 0 0.5rem 0;
+        font-size: 1.1rem;
+    }
+    .threshold-controls {
+        background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+        color: #2d3436;
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 0.5rem 0;
+        border-left: 3px solid #00b894;
+        box-shadow: 0 2px 8px rgba(168, 237, 234, 0.3);
+    }
+    .threshold-controls h4 {
+        margin: 0 0 0.5rem 0;
+        font-size: 1rem;
+        color: #2d3436;
+    }
+    .compact-section {
+        margin: 0.5rem 0;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+
     
     # Check if we have batch data
     if "batch_files" not in st.session_state:
@@ -38,18 +125,20 @@ def batch_threshold_step():
         return
     
     # Progress info
+    #st.markdown('<div class="progress-section">', unsafe_allow_html=True)
     total_files = len(batch_files)
     st.write(f"### Progress: {len(completed_threshold)}/{total_files} files completed")
     st.progress(len(completed_threshold) / total_files)
+    st.markdown('</div>', unsafe_allow_html=True)
     
     # Find next file to process
     if current_index >= len(batch_files):
         # All files processed for threshold step
-        st.success("🎉 All files have been processed for threshold step!")
-        if st.button("➡️ Proceed to Process Step"):
+        st.success("🎉 All thresholds have been set!")
+        if st.button("→ Continue to Process Step"):
             st.session_state["current_step"] = "batch_process"
             st.rerun()
-        if st.button("← Back to Draw Step"):
+        if st.button("Back to Draw Step"):
             st.session_state["current_step"] = "batch_draw"
             st.rerun()
         return
@@ -78,26 +167,32 @@ def batch_threshold_step():
         st.rerun()
         return
     
-    st.write(f"### Currently processing: `{current_file}` ({current_index + 1}/{total_files})")
-    
-    # File navigation
+    st.markdown(f"""
+    <div class="current-file">
+        <h4>📁 {current_file} ({current_index + 1}/{total_files})</h4>
+        <p>💡 Navigate between files to adjust thresholds • Saved files are locked</p>
+    </div>
+    """, unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 2, 1])
     with col1:
-        if current_index > 0 and st.button("← Previous File"):
+        if current_index > 0 and st.button("← Previous", help="Navigate to previous file"):
             st.session_state["batch_current_index"] = current_index - 1
             st.rerun()
     
     with col3:
         next_file_index = current_index + 1
-        if next_file_index < len(batch_files) and st.button("Next File →"):
+        if next_file_index < len(batch_files) and st.button("Next →", help="Navigate to next file"):
             st.session_state["batch_current_index"] = next_file_index
             st.rerun()
     
     # Show completed files list
     if len(completed_threshold) > 0:
-        with st.expander(f"Completed files ({len(completed_threshold)})"):
-            for file in completed_threshold:
-                st.write(f"✅ {file}.nii")
+        with st.expander(f"✅ Completed Files ({len(completed_threshold)})", expanded=False):
+            st.caption("*These files have saved thresholds and are locked*")
+            cols = st.columns(3)
+            for i, file in enumerate(completed_threshold):
+                with cols[i % 3]:
+                    st.markdown(f"🔒 **{file}.nii**")
     
     # Process current file
     input_folder = os.path.join(os.getcwd(), 'media')
@@ -122,74 +217,85 @@ def batch_threshold_step():
         if st.button("Skip this file"):
             st.session_state["batch_current_index"] = current_index + 1
             st.rerun()
-        return
+    #st.markdown('<div class="threshold-container">', unsafe_allow_html=True)
+    st.markdown("### Threshold Preview")
     
-    # Display options
-    width_options = [400, 500, 600, 700, 800, 900, 1000]
-    selected_width = st.selectbox("Select image width", width_options, index=2, key=f"width_{current_file}")
+    # Display options and threshold controls in organized layout
+    col1, col2 = st.columns([1, 2])
     
-    # Threshold slider
-    threshold_key = f"threshold_slider_{current_file_name}"
-    
-    saved_thresholds = st.session_state.get("batch_thresholds", {})
-    default_threshold = saved_thresholds.get(current_file_name, 0.38)
-    
-    threshold = st.slider(
-        "Select threshold value",
-        min_value=0.0,
-        max_value=1.0,
-        value=default_threshold,
-        step=0.01,
-        key=threshold_key
-    )
-    
-    if "batch_thresholds" not in st.session_state:
-        st.session_state["batch_thresholds"] = {}
-    st.session_state["batch_thresholds"][current_file_name] = threshold
-    
-    # Display thresholded image
-    fig = ThresholdOperations.display_thresholded_slice(img, msk, threshold)
-    buf = io.BytesIO()
-    fig.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
-    buf.seek(0)
-    
-    cols = st.columns([1, 1, 1])
-    with cols[1]:
-        st.image(buf, caption="Thresholded Central Slice", width=selected_width)
-    
-    # Save button
-    if st.button("💾 Save Threshold and Continue to Next File"):
-        # Save threshold in session
-        if "batch_final_thresholds" not in st.session_state:
-            st.session_state["batch_final_thresholds"] = {}
-        st.session_state["batch_final_thresholds"][current_file_name] = threshold
-
-        # Save threshold to disk
-        try:
-            threshold_json = os.path.join(output_path, "threshold.json")
-            with open(threshold_json, "w") as f:
-                json.dump({"threshold": threshold}, f)
-
-             # Mark file as completed
-            st.session_state["batch_completed_files"]["threshold"].append(current_file_name)
-
-            # Move to next file
-            st.session_state["batch_current_index"] = current_index + 1
-
-            st.success(f"Threshold {threshold:.2f} saved for {current_file}!")
+    with col1:
+        width_options = [400, 500, 600, 700, 800, 900, 1000]
+        selected_width = st.selectbox("Image Width", width_options, index=2, key=f"width_{current_file}")
         
-        except Exception as e:
-            st.warning(f"Could not save threshold for {current_file_name}: {e}")
+        # Threshold controls in compact container
+        st.markdown('<div class="threshold-controls">', unsafe_allow_html=True)
+
         
-        st.rerun()      
+        threshold_key = f"threshold_slider_{current_file_name}"
+        
+        saved_thresholds = st.session_state.get("batch_thresholds", {})
+        default_threshold = saved_thresholds.get(current_file_name, 0.38)
+        
+        threshold = st.slider(
+            "Threshold",
+            min_value=0.0,
+            max_value=1.0,
+            value=default_threshold,
+            step=0.01,
+            key=threshold_key,
+            help="Lower = more inclusive, Higher = more selective"
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Control buttons under the slider
+        if st.button("💾 Save & Continue", type="primary", use_container_width=True):
+            # Save threshold in session
+            if "batch_final_thresholds" not in st.session_state:
+                st.session_state["batch_final_thresholds"] = {}
+            st.session_state["batch_final_thresholds"][current_file_name] = threshold
+
+            # Save threshold to disk
+            try:
+                threshold_json = os.path.join(output_path, "threshold.json")
+                with open(threshold_json, "w") as f:
+                    json.dump({"threshold": threshold}, f)
+
+                 # Mark file as completed
+                st.session_state["batch_completed_files"]["threshold"].append(current_file_name)
+
+                # Move to next file
+                st.session_state["batch_current_index"] = current_index + 1
+
+                st.success(f"Threshold {threshold:.2f} saved!")
+            
+            except Exception as e:
+                st.warning(f"Could not save threshold: {e}")
+            
+            st.rerun()
+        
+        if st.button("← Back to Draw Step", use_container_width=True):
+            st.session_state["current_step"] = "batch_draw"
+            st.rerun()
     
-    # Show current thresholds
+    with col2:
+        if "batch_thresholds" not in st.session_state:
+            st.session_state["batch_thresholds"] = {}
+        st.session_state["batch_thresholds"][current_file_name] = threshold
+        
+        # Display thresholded image
+        fig = ThresholdOperations.display_thresholded_slice(img, msk, threshold)
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
+        buf.seek(0)
+        
+        st.image(buf, width=selected_width)
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Show current thresholds in compact format
     if "batch_final_thresholds" in st.session_state and len(st.session_state["batch_final_thresholds"]) > 0:
-        with st.expander("Saved Thresholds"):
-            for file_name, thresh in st.session_state["batch_final_thresholds"].items():
-                st.write(f"📁 {file_name}.nii: {thresh:.3f}")
-    
-    # Back button
-    if st.button("← Back to Draw Step"):
-        st.session_state["current_step"] = "batch_draw"
-        st.rerun()
+        with st.expander(f"📊 Saved Thresholds ({len(st.session_state['batch_final_thresholds'])})", expanded=False):
+            cols = st.columns(3)
+            for i, (file_name, thresh) in enumerate(st.session_state["batch_final_thresholds"].items()):
+                with cols[i % 3]:
+                    st.metric(f"{file_name}", f"{thresh:.3f}")
