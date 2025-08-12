@@ -1,210 +1,164 @@
 """
-SAM2 Automatic Threshold Analysis
-Automatically detects high threshold regions and generates bounding box
+SAM2 Automatic Threshold Detection and Bounding Box Generation
 """
+import os
 import streamlit as st
 import numpy as np
 import cv2
-import os
-import time
-from sam_utils import SAM2Manager, show_sam2_setup_info, convert_nii_slice_for_sam2
-from utils import ImageOperations
+from PIL import Image
+from utils import ImageOperations, ThresholdOperations
+from sam_utils import SAM2Manager, convert_nii_slice_for_sam2
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from matplotlib.patches import Rectangle
+import io
+
+def find_bounding_box(mask, padding=10):
+    """
+    Find tight bounding box around mask region
+    
+    Args:
+        mask: Binary mask array
+        padding: Extra padding around bounding box
+    
+    Returns:
+        [x_min, y_min, x_max, y_max] in format expected by SAM2
+    """
+    # Find all non-zero points
+    rows = np.any(mask, axis=1)
+    cols = np.any(mask, axis=0)
+    
+    if not np.any(rows) or not np.any(cols):
+        return None
+    
+    rmin, rmax = np.where(rows)[0][[0, -1]]
+    cmin, cmax = np.where(cols)[0][[0, -1]]
+    
+    # Add padding
+    height, width = mask.shape
+    x_min = max(0, cmin - padding)
+    y_min = max(0, rmin - padding)
+    x_max = min(width, cmax + padding)
+    y_max = min(height, rmax + padding)
+    
+    return np.array([x_min, y_min, x_max, y_max], dtype=np.float32)
+
+def visualize_threshold_and_bbox(image, mask, threshold, bbox):
+    """
+    Create visualization showing original image, thresholded mask, and bounding box
+    """
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    
+    # Original image
+    axes[0].imshow(image, cmap='gray')
+    axes[0].set_title('Original Image')
+    axes[0].axis('off')
+    
+    # Thresholded mask
+    thresholded_mask = (mask > threshold).astype(np.uint8)
+    axes[1].imshow(image, cmap='gray', alpha=0.7)
+    axes[1].imshow(thresholded_mask, cmap='Reds', alpha=0.5)
+    axes[1].set_title(f'Threshold: {threshold:.3f}')
+    axes[1].axis('off')
+    
+    # Image with bounding box
+    axes[2].imshow(image, cmap='gray')
+    if bbox is not None:
+        rect = Rectangle((bbox[0], bbox[1]), bbox[2]-bbox[0], bbox[3]-bbox[1], 
+                        linewidth=2, edgecolor='red', facecolor='none')
+        axes[2].add_patch(rect)
+        axes[2].set_title('Auto-Generated Bounding Box')
+    else:
+        axes[2].set_title('No Region Detected')
+    axes[2].axis('off')
+    
+    plt.tight_layout()
+    return fig
 
 def sam_threshold_auto_step():
-    """Automatic threshold analysis to generate bounding box"""
-    st.header("🎯 SAM2 Automatic Threshold Analysis")
+    """
+    Automatic threshold detection and bounding box generation step
+    """
+    st.header("SAM2 Processing - Automatic Threshold Detection")
     
-    if "uploaded_file_path" not in st.session_state:
-        st.error("No file found. Please go back to file selection.")
-        if st.button("↩️ Go to SAM2 Setup"):
+    if "sam_selected_file" not in st.session_state:
+        st.error("No file selected. Please go back to file selection.")
+        if st.button("← Back to File Selection"):
             st.session_state["current_step"] = "sam"
             st.rerun()
         return
     
-    # Inicializar o gerenciador SAM2
-    if "sam2_manager" not in st.session_state:
-        st.session_state["sam2_manager"] = SAM2Manager()
+    file_path = st.session_state["sam_file_path"]
+    file_name = st.session_state["sam_file_name"]
     
-    sam_manager = st.session_state["sam2_manager"]
-    
-    # Verificar setup do SAM2
-    if not sam_manager.model_loaded:
-        st.subheader("📋 SAM2 Setup Status")
-        
-        deps_ok, deps_msg = sam_manager.check_dependencies()
-        if not deps_ok:
-            st.error("❌ " + deps_msg)
-            show_sam2_setup_info()
-            return
-        
-        checkpoint_ok, checkpoint_msg = sam_manager.check_checkpoint()
-        if not checkpoint_ok:
-            st.error("❌ " + checkpoint_msg)
-            st.info("💡 Execute o script: `./download_sam2_checkpoint.sh`")
-            return
-        
-        # Carregar automaticamente
-        with st.spinner("Loading SAM2 model automatically..."):
-            success, message = sam_manager.load_model()
-            if success:
-                st.success("✅ " + message)
-            else:
-                st.error("❌ " + message)
-                return
-    
-    # Automatic processing
-    st.success("✅ Starting automatic processing...")
-    
-    # Load the uploaded file directly
-    uploaded_file_path = st.session_state["uploaded_file_path"]
+    st.write(f"### Processing: `{st.session_state['sam_selected_file']}`")
     
     try:
-        # Load central slice of the uploaded file
-        img = ImageOperations.load_nii_central_slice(uploaded_file_path)
-        # For SAM2, we don't need a pre-existing mask - we'll generate bounding box from the image
-        msk = None  # SAM2 will generate the mask based on the bounding box
-    except Exception as e:
-        st.error(f"Error loading image: {str(e)}")
-        return
-    
-    with st.spinner("Analyzing threshold and detecting bounding box automatically..."):
+        # Load the image and create initial mask (similar to batch process)
+        image, affine, nb_of_slices = ImageOperations.load_image(file_path)
         
-        # Parâmetros automáticos otimizados
-        high_threshold = 0.85  # Threshold alto automático
-        edge_threshold1 = 80
-        edge_threshold2 = 160
+        # For automatic processing, we need to create a basic mask
+        # This is a simplified approach - in practice, you might want to use
+        # a different method to identify regions of interest
+        st.info("🔄 Generating automatic threshold analysis...")
         
-        st.info(f"🔧 Using automatic parameters:")
-        st.write(f"• High Threshold: {high_threshold}")
-        st.write(f"• Edge Detection: Canny({edge_threshold1}, {edge_threshold2})")
+        # Use a hardcoded threshold for automatic processing
+        auto_threshold = st.slider("Auto Threshold Value", 0.0, 1.0, 0.45, 0.01, 
+                                 help="This threshold will be used to detect regions for SAM2 processing")
         
-        # Aplicar threshold alto
-        binary_mask = (msk > high_threshold).astype(np.uint8) * 255
+        # Load central slice for analysis
+        central_slice = ImageOperations.load_nii_central_slice(file_path)
         
-        # Detectar bordas
-        edges = cv2.Canny(binary_mask, edge_threshold1, edge_threshold2)
+        # Create a simple density-based mask for demonstration
+        # In practice, this should be replaced with your actual mask generation logic
+        normalized_slice = (central_slice - central_slice.min()) / (central_slice.max() - central_slice.min())
         
-        # Encontrar contornos
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Create binary mask based on threshold
+        binary_mask = (normalized_slice > auto_threshold).astype(np.uint8)
         
-        if contours:
-            # Encontrar o maior contorno
-            largest_contour = max(contours, key=cv2.contourArea)
-            
-            # Calcular bounding box
-            x, y, w, h = cv2.boundingRect(largest_contour)
-            
-            # Expandir a bounding box ligeiramente
-            margin = 15
-            x = max(0, x - margin)
-            y = max(0, y - margin)
-            w = min(img.shape[1] - x, w + 2*margin)
-            h = min(img.shape[0] - y, h + 2*margin)
-            
-            # Salvar bounding box
-            bbox = [x, y, x+w, y+h]
-            st.session_state["sam_bounding_box"] = bbox
-            st.session_state["sam_threshold_used"] = high_threshold
-            st.session_state["sam_central_slice_img"] = img
-            
-            st.success(f"✅ Bounding box detected automatically: ({x}, {y}, {x+w}, {y+h})")
-            
-            # Visualização automática
-            st.subheader("📊 Automatic Analysis Results")
-            
-            fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-            
-            # Imagem original
-            axes[0,0].imshow(img, cmap='gray')
-            axes[0,0].set_title("Original Image")
-            axes[0,0].axis('off')
-            
-            # Máscara com threshold
-            axes[0,1].imshow(binary_mask, cmap='gray')
-            axes[0,1].set_title(f"Binary Mask (threshold={high_threshold})")
-            axes[0,1].axis('off')
-            
-            # Bordas detectadas
-            axes[1,0].imshow(edges, cmap='gray')
-            axes[1,0].set_title("Detected Edges")
-            axes[1,0].axis('off')
-            
-            # Resultado final com bounding box
-            result_img = img.copy()
-            if len(result_img.shape) == 2:
-                result_img = cv2.cvtColor((result_img * 255).astype(np.uint8), cv2.COLOR_GRAY2RGB)
-            else:
-                result_img = (result_img * 255).astype(np.uint8)
-            
-            # Desenhar bounding box
-            cv2.rectangle(result_img, (x, y), (x+w, y+h), (255, 0, 0), 3)
-            axes[1,1].imshow(result_img)
-            axes[1,1].set_title("Auto-Generated Bounding Box")
-            axes[1,1].axis('off')
-            
-            plt.tight_layout()
-            st.pyplot(fig)
-            plt.close()
-            
-            # Preparar imagem para SAM2
-            sam_image = convert_nii_slice_for_sam2(img)
-            success, message = sam_manager.set_image(sam_image)
-            
-            if success:
-                st.success("✅ Image prepared for SAM2 inference")
-                
-                # Proceed automatically to inference
-                st.info("🚀 Proceeding to SAM2 inference automatically...")
-                
-                # Small delay to show results
-                time.sleep(2)
-                
+        # Find bounding box
+        bbox = find_bounding_box(binary_mask, padding=20)
+        
+        if bbox is None:
+            st.error("No region detected with the current threshold. Try adjusting the threshold value.")
+            return
+        
+        # Store results
+        st.session_state["sam_threshold"] = auto_threshold
+        st.session_state["sam_central_slice"] = central_slice
+        st.session_state["sam_binary_mask"] = binary_mask
+        st.session_state["sam_bounding_box"] = bbox
+        st.session_state["sam_image_data"] = image
+        st.session_state["sam_affine"] = affine
+        st.session_state["sam_nb_slices"] = nb_of_slices
+        
+        # Display results
+        fig = visualize_threshold_and_bbox(central_slice, normalized_slice, auto_threshold, bbox)
+        
+        st.subheader("Automatic Analysis Results")
+        st.pyplot(fig)
+        
+        # Show bounding box coordinates
+        st.write("**Detected Bounding Box:**")
+        st.write(f"- Top-left: ({bbox[0]:.0f}, {bbox[1]:.0f})")
+        st.write(f"- Bottom-right: ({bbox[2]:.0f}, {bbox[3]:.0f})")
+        st.write(f"- Width: {bbox[2] - bbox[0]:.0f} pixels")
+        st.write(f"- Height: {bbox[3] - bbox[1]:.0f} pixels")
+        
+        # Continue button
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("✅ Continue to SAM2 Inference", type="primary"):
                 st.session_state["current_step"] = "sam_inference"
                 st.rerun()
-            else:
-                st.error("❌ " + message)
         
-        else:
-            st.error("❌ No contours found with automatic parameters.")
-            st.info("The mask might be too small or the threshold too high.")
-            
-            # Tentar com threshold mais baixo
-            st.warning("Trying with lower threshold...")
-            high_threshold = 0.70
-            
-            binary_mask = (msk > high_threshold).astype(np.uint8) * 255
-            edges = cv2.Canny(binary_mask, edge_threshold1, edge_threshold2)
-            contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            if contours:
-                st.success(f"✅ Found contours with threshold {high_threshold}")
-                
-                # Repeat process with lower threshold
-                largest_contour = max(contours, key=cv2.contourArea)
-                x, y, w, h = cv2.boundingRect(largest_contour)
-                
-                margin = 15
-                x = max(0, x - margin)
-                y = max(0, y - margin)
-                w = min(img.shape[1] - x, w + 2*margin)
-                h = min(img.shape[0] - y, h + 2*margin)
-                
-                bbox = [x, y, x+w, y+h]
-                st.session_state["sam_bounding_box"] = bbox
-                st.session_state["sam_threshold_used"] = high_threshold
-                st.session_state["sam_central_slice_img"] = img
-                
-                # Preparar imagem para SAM2
-                sam_image = convert_nii_slice_for_sam2(img)
-                success, message = sam_manager.set_image(sam_image)
-                
-                if success:
-                    st.success("✅ Proceeding with lower threshold...")
-                    st.session_state["current_step"] = "sam_inference"
-                    st.rerun()
-            else:
-                st.error("❌ Could not find suitable regions even with lower threshold.")
-                if st.button("↩️ Back to Draw Step"):
-                    st.session_state["current_step"] = "draw"
-                    st.rerun()
+        with col2:
+            if st.button("← Back to File Selection"):
+                st.session_state["current_step"] = "sam"
+                st.rerun()
+        
+    except Exception as e:
+        st.error(f"Error in automatic threshold detection: {str(e)}")
+        if st.button("← Back to File Selection"):
+            st.session_state["current_step"] = "sam"
+            st.rerun()

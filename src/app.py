@@ -1,11 +1,4 @@
-from file_selection_step        # Traditional Processing Mode
-        with col1:
-            st.subheader("📄 Traditional Processing")
-            st.write("Process multiple .nii or .dicom files:")
-            st.write("• Select files you want to process")
-            st.write("• Draw masks for each")
-            st.write("• Set thresholds for each mask")
-            st.write("• Process all files at once or one by one")file_selection_step
+from file_selection_step import file_selection_step
 from batch_draw_step import batch_draw_step
 from batch_threshold_step import batch_threshold_step
 from batch_process_step import batch_process_step

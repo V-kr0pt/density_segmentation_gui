@@ -9,8 +9,9 @@ import os
 
 # SAM2 imports with fallback
 try:
-    from sam2.build_sam import build_sam2
+    from sam2.build_sam import build_sam2, build_sam2_video_predictor
     from sam2.sam2_image_predictor import SAM2ImagePredictor
+    from sam2.sam2_video_predictor import SAM2VideoPredictor
     SAM2_AVAILABLE = True
 except ImportError:
     SAM2_AVAILABLE = False
@@ -58,17 +59,68 @@ class SAM2Manager:
             return False, checkpoint_msg
         
         try:
-            # Use config name that SAM2 finds automatically
-            config_name = "sam2.1_hiera_l.yaml"
-
-            # Load model
-            sam2_model = build_sam2(config_name, CHECKPOINT_PATH, device=self.device)
+            # Try different config approaches for SAM2
+            # Based on the actual config structure found in your installation
+            config_options = [
+                "sam2.1_hiera_l.yaml",                 # Direct config name
+                "configs/sam2.1_hiera_l.yaml",         # With configs/ prefix
+                "sam2.1/sam2.1_hiera_l.yaml",          # From sam2.1 folder
+                "sam2_hiera_l.yaml",                   # Alternative name
+                "sam2.1_hiera_large.yaml",             # Another alternative
+            ]
+            
+            sam2_model = None
+            config_used = None
+            last_error = None
+            
+            for config_name in config_options:
+                try:
+                    sam2_model = build_sam2(config_name, CHECKPOINT_PATH, device=self.device)
+                    config_used = config_name
+                    break
+                except Exception as config_error:
+                    last_error = str(config_error)
+                    continue
+            
+            if sam2_model is None:
+                # If all specific configs fail, let's try to find the actual config file
+                try:
+                    import sam2
+                    sam2_path = os.path.dirname(sam2.__file__)
+                    
+                    # Common config locations to try
+                    possible_configs = [
+                        os.path.join(sam2_path, "configs", "sam2.1_hiera_l.yaml"),
+                        os.path.join(sam2_path, "sam2.1", "sam2.1_hiera_l.yaml"), 
+                        os.path.join(sam2_path, "configs", "sam2.1", "sam2.1_hiera_l.yaml"),
+                    ]
+                    
+                    for config_path in possible_configs:
+                        if os.path.exists(config_path):
+                            sam2_model = build_sam2(config_path, CHECKPOINT_PATH, device=self.device)
+                            config_used = f"found at: {config_path}"
+                            break
+                    
+                    if sam2_model is None:
+                        # Final fallback: try to build without config (auto-detect)
+                        sam2_model = build_sam2(None, CHECKPOINT_PATH, device=self.device)
+                        config_used = "auto-detected"
+                        
+                except Exception as final_error:
+                    error_msg = f"Error loading model with all configs. Last error: {last_error}"
+                    error_msg += f"\nFinal error: {str(final_error)}"
+                    error_msg += "\n\nTroubleshooting:\n"
+                    error_msg += "1. Make sure SAM2 is properly installed: pip install git+https://github.com/facebookresearch/segment-anything-2.git\n"
+                    error_msg += "2. Check if the checkpoint file exists at: " + CHECKPOINT_PATH + "\n"
+                    error_msg += "3. Try reinstalling SAM2 and PyTorch with CUDA support"
+                    return False, error_msg
+            
             self.predictor = SAM2ImagePredictor(sam2_model)
             self.model_loaded = True
-            return True, f"SAM2 model loaded successfully on device: {self.device}"
+            return True, f"SAM2 model loaded successfully on device: {self.device} using config: {config_used}"
             
         except Exception as e:
-            return False, f"Error loading model: {str(e)}"
+            return False, f"Unexpected error loading model: {str(e)}"
     
     def set_image(self, image):
         """Set the image for segmentation"""

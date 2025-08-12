@@ -1,337 +1,253 @@
 """
-SAM2 Propagation - Video-like propagation through all slices
+SAM2 Video-like Propagation Step - Propagate segmentation across all slices
 """
+import os
 import streamlit as st
 import numpy as np
-import nibabel as nib
-import os
-import cv2
 from PIL import Image
 import tempfile
 import shutil
-from sam_utils import convert_nii_slice_for_sam2
+from sam_utils import SAM2Manager, convert_nii_slice_for_sam2
+from utils import ImageOperations
 import matplotlib.pyplot as plt
 
+try:
+    from sam2.build_sam import build_sam2_video_predictor
+    from sam2.sam2_video_predictor import SAM2VideoPredictor
+    SAM2_VIDEO_AVAILABLE = True
+except ImportError:
+    SAM2_VIDEO_AVAILABLE = False
+
+def prepare_video_frames(image_data, temp_dir):
+    """
+    Convert 3D medical image to individual frame files for SAM2 video processing
+    
+    Args:
+        image_data: 3D numpy array (slices, height, width)
+        temp_dir: Temporary directory to save frames
+    
+    Returns:
+        frame_names: List of frame filenames
+    """
+    frame_names = []
+    
+    for slice_idx in range(image_data.shape[2]):  # Assuming slices are the 3rd dimension
+        # Extract slice
+        slice_2d = image_data[:, :, slice_idx]
+        
+        # Convert to SAM2 format
+        sam2_frame = convert_nii_slice_for_sam2(slice_2d)
+        
+        # Save as image file
+        frame_name = f"frame_{slice_idx:04d}.jpg"
+        frame_path = os.path.join(temp_dir, frame_name)
+        
+        pil_image = Image.fromarray(sam2_frame)
+        pil_image.save(frame_path)
+        
+        frame_names.append(frame_name)
+    
+    return frame_names
+
+def visualize_propagation_results(video_segments, frame_names, sample_frames=5):
+    """
+    Visualize propagation results for a sample of frames
+    """
+    if not video_segments:
+        return None
+    
+    # Select frames to visualize
+    total_frames = len(frame_names)
+    if total_frames <= sample_frames:
+        selected_frames = list(range(total_frames))
+    else:
+        stride = max(1, total_frames // sample_frames)
+        selected_frames = list(range(0, total_frames, stride))[:sample_frames]
+    
+    fig, axes = plt.subplots(1, len(selected_frames), figsize=(15, 3))
+    if len(selected_frames) == 1:
+        axes = [axes]
+    
+    for i, frame_idx in enumerate(selected_frames):
+        if frame_idx in video_segments:
+            # Load original frame
+            frame_path = os.path.join(st.session_state["sam_temp_dir"], frame_names[frame_idx])
+            frame_img = np.array(Image.open(frame_path))
+            
+            axes[i].imshow(frame_img)
+            
+            # Overlay masks
+            for obj_id, mask in video_segments[frame_idx].items():
+                axes[i].imshow(mask, alpha=0.5, cmap='Reds')
+            
+            axes[i].set_title(f'Frame {frame_idx}')
+            axes[i].axis('off')
+        else:
+            axes[i].text(0.5, 0.5, f'Frame {frame_idx}\n(no data)', 
+                        ha='center', va='center', transform=axes[i].transAxes)
+            axes[i].axis('off')
+    
+    plt.tight_layout()
+    return fig
+
 def sam_propagation_step():
-    """Propagação SAM2 através de todos os slices (como frames de vídeo)"""
-    st.header("🌊 SAM2 Video-like Propagation")
+    """
+    SAM2 video-like propagation across all slices
+    """
+    st.header("SAM2 Processing - Video-like Propagation")
     
-    if not st.session_state.get("sam_inference_complete", False):
-        st.error("SAM2 inference not completed. Please complete inference first.")
-        return
-    
-    sam_manager = st.session_state["sam2_manager"]
-    
-    if not sam_manager.model_loaded:
-        st.error("SAM2 model not loaded.")
-        return
-    
-    # Informações do estado atual
-    bbox = st.session_state["sam_bounding_box"]
-    initial_mask = st.session_state["sam_initial_mask"]
-    central_slice_idx = st.session_state["sam_central_slice_idx"]
-    
-    st.success("✅ Ready for propagation!")
-    st.info(f"Starting from slice {central_slice_idx} with bounding box: {bbox}")
-    
-    # Carregar dados completos
-    original_image_path = st.session_state["original_image_path"]
-    nii_img = nib.load(original_image_path)
-    nii_data = nii_img.get_fdata()
-    
-    st.subheader("📊 Propagation Setup")
-    st.write(f"**Total slices to process:** {nii_data.shape[0]}")
-    st.write(f"**Starting slice:** {central_slice_idx}")
-    
-    # Executar propagação automaticamente
-    if st.button("🚀 Start Automatic Propagation", type="primary") or st.session_state.get("auto_start_propagation", False):
-        
-        st.session_state["auto_start_propagation"] = True
-        
-        with st.spinner("Preparing slices for video-like processing..."):
-            
-            # Criar diretório temporário para os slices
-            temp_dir = tempfile.mkdtemp()
-            slice_paths = []
-            
-            try:
-                # Salvar todos os slices como imagens PNG
-                progress_bar = st.progress(0)
-                st.write("📁 Converting slices to images...")
-                
-                for i in range(nii_data.shape[0]):
-                    # Processar slice
-                    slice_data = nii_data[i, :, :]
-                    slice_data = np.rot90(slice_data)  # Mesma rotação
-                    
-                    # Converter para imagem SAM2
-                    sam_image = convert_nii_slice_for_sam2(slice_data)
-                    
-                    # Salvar como PNG
-                    slice_filename = f"slice_{i:03d}.png"
-                    slice_path = os.path.join(temp_dir, slice_filename)
-                    
-                    # Converter para PIL e salvar
-                    pil_image = Image.fromarray(sam_image)
-                    pil_image.save(slice_path)
-                    slice_paths.append(slice_path)
-                    
-                    # Atualizar progresso
-                    progress_bar.progress((i + 1) / nii_data.shape[0])
-                
-                st.success(f"✅ All {len(slice_paths)} slices prepared!")
-                
-                # Inicializar estado do SAM2 para propagação
-                st.write("🧠 Initializing SAM2 video state...")
-                
-                # Usar a nova API do SAM2 para propagação em vídeo
-                try:
-                    # Inicializar estado como se fosse um vídeo
-                    inference_state = sam_manager.predictor.init_state(image_paths=slice_paths)
-                    sam_manager.predictor.reset_state(inference_state)
-                    
-                    st.success("✅ SAM2 video state initialized!")
-                    
-                    # Adicionar bounding box no slice central
-                    st.write(f"📍 Adding box prompt on slice {central_slice_idx}...")
-                    
-                    box = np.array([bbox[0], bbox[1], bbox[2], bbox[3]], dtype=np.float32)
-                    obj_id = 1  # ID do objeto
-                    
-                    _, out_obj_ids, out_mask_logits = sam_manager.predictor.add_new_points_or_box(
-                        inference_state=inference_state,
-                        frame_idx=central_slice_idx,
-                        obj_id=obj_id,
-                        box=box,
-                    )
-                    
-                    st.success(f"✅ Box prompt added! Object IDs: {out_obj_ids}")
-                    
-                    # Executar propagação
-                    st.write("🌊 Running propagation through all slices...")
-                    progress_bar = st.progress(0)
-                    
-                    slice_segments = {}
-                    processed_count = 0
-                    
-                    for out_frame_idx, out_obj_ids, out_mask_logits in sam_manager.predictor.propagate_in_video(inference_state):
-                        # Processar máscaras
-                        slice_segments[out_frame_idx] = {}
-                        
-                        for i, out_obj_id in enumerate(out_obj_ids):
-                            mask = (out_mask_logits[i] > 0.0).cpu().numpy()
-                            slice_segments[out_frame_idx][out_obj_id] = mask
-                        
-                        processed_count += 1
-                        progress_bar.progress(processed_count / len(slice_paths))
-                    
-                    st.success(f"✅ Propagation completed! Processed {len(slice_segments)} slices.")
-                    
-                    # Salvar resultados
-                    st.session_state["sam_propagation_results"] = slice_segments
-                    st.session_state["sam_slice_paths"] = slice_paths
-                    st.session_state["sam_temp_dir"] = temp_dir
-                    st.session_state["propagation_complete"] = True
-                    
-                    # Mostrar estatísticas
-                    st.subheader("📊 Propagation Statistics")
-                    
-                    total_slices = len(slice_segments)
-                    avg_coverage = []
-                    
-                    for frame_idx in sorted(slice_segments.keys()):
-                        for obj_id, mask in slice_segments[frame_idx].items():
-                            coverage = (np.sum(mask) / mask.size) * 100
-                            avg_coverage.append(coverage)
-                    
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Slices Processed", total_slices)
-                    with col2:
-                        st.metric("Avg Coverage", f"{np.mean(avg_coverage):.1f}%")
-                    with col3:
-                        st.metric("Objects Tracked", len(out_obj_ids))
-                    
-                    # Visualizar alguns resultados
-                    st.subheader("🎭 Sample Results")
-                    
-                    # Mostrar resultados de algumas fatias
-                    sample_indices = [0, len(slice_segments)//4, len(slice_segments)//2, 3*len(slice_segments)//4, len(slice_segments)-1]
-                    sample_indices = [idx for idx in sample_indices if idx in slice_segments]
-                    
-                    if len(sample_indices) >= 3:
-                        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-                        axes = axes.flatten()
-                        
-                        for i, frame_idx in enumerate(sample_indices[:6]):
-                            if i < len(axes):
-                                # Carregar imagem
-                                img = Image.open(slice_paths[frame_idx])
-                                axes[i].imshow(img)
-                                
-                                # Sobrepor máscara
-                                if frame_idx in slice_segments:
-                                    for obj_id, mask in slice_segments[frame_idx].items():
-                                        axes[i].imshow(mask, alpha=0.5, cmap='viridis')
-                                
-                                axes[i].set_title(f"Slice {frame_idx}")
-                                axes[i].axis('off')
-                        
-                        plt.tight_layout()
-                        st.pyplot(fig)
-                        plt.close()
-                    
-                    # Opções de salvamento
-                    st.subheader("💾 Save Results")
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button("💾 Save All Masks"):
-                            save_masks_to_nii(slice_segments, nii_img, nii_data.shape)
-                            st.success("✅ Masks saved as NII files!")
-                    
-                    with col2:
-                        if st.button("📊 Generate Report"):
-                            generate_propagation_report(slice_segments, slice_paths)
-                            st.success("✅ Report generated!")
-                    
-                    st.balloons()
-                    st.success("🎉 SAM2 propagation completed successfully!")
-                    
-                except Exception as e:
-                    st.error(f"❌ Error during SAM2 propagation: {str(e)}")
-                    st.write("This might be due to SAM2 version compatibility.")
-                    st.write("Expected SAM2 API: predictor.init_state(image_paths=...)")
-                
-            except Exception as e:
-                st.error(f"❌ Error preparing slices: {str(e)}")
-            
-            finally:
-                # Não limpar ainda - vamos manter para visualização
-                pass
-    
-    # Mostrar resultados se já processados
-    if st.session_state.get("propagation_complete", False):
-        st.success("✅ Propagation results available!")
-        
-        if st.button("🔍 View Detailed Results"):
-            show_detailed_results()
-        
-        if st.button("🏠 Complete Processing"):
-            # Limpar arquivos temporários
-            cleanup_temp_files()
-            st.session_state.clear()
-            st.session_state["current_step"] = "mode_selection"
-            st.success("✅ Processing completed! Returning to main menu.")
+    # Check prerequisites
+    if "sam_best_mask" not in st.session_state:
+        st.error("No SAM2 inference results found. Please complete the inference step first.")
+        if st.button("← Back to Inference"):
+            st.session_state["current_step"] = "sam_inference"
             st.rerun()
-
-def save_masks_to_nii(slice_segments, original_nii, original_shape):
-    """Salva as máscaras como arquivos NII"""
-    try:
-        # Criar volume 3D das máscaras
-        mask_volume = np.zeros(original_shape, dtype=np.uint8)
-        
-        for frame_idx in sorted(slice_segments.keys()):
-            for obj_id, mask in slice_segments[frame_idx].items():
-                # Converter máscara de volta para orientação original
-                mask_rotated = np.rot90(mask, -1)  # Rotação inversa
-                mask_volume[frame_idx, :, :] = mask_rotated.astype(np.uint8) * 255
-        
-        # Criar imagem NII
-        mask_nii = nib.Nifti1Image(mask_volume, original_nii.affine, original_nii.header)
-        
-        # Create output directory based on uploaded file name
-        file_name = st.session_state.get("uploaded_file_name", "output")
-        base_name = os.path.splitext(file_name.replace('.nii.gz', ''))[0]  # Remove .nii or .nii.gz
-        output_dir = os.path.join("output", f"sam2_{base_name}")
-        os.makedirs(output_dir, exist_ok=True)
-        
-        mask_path = os.path.join(output_dir, "sam2_propagated_mask.nii")
-        nib.save(mask_nii, mask_path)
-        
-        st.success(f"✅ Mask saved to: {mask_path}")
-        
-    except Exception as e:
-        st.error(f"❌ Error saving masks: {str(e)}")
-
-def generate_propagation_report(slice_segments, slice_paths):
-    """Gera relatório da propagação"""
-    try:
-        report = []
-        report.append("# SAM2 Propagation Report\n")
-        report.append(f"Total slices processed: {len(slice_segments)}\n")
-        report.append(f"Total images: {len(slice_paths)}\n\n")
-        
-        report.append("## Coverage by Slice\n")
-        for frame_idx in sorted(slice_segments.keys()):
-            for obj_id, mask in slice_segments[frame_idx].items():
-                coverage = (np.sum(mask) / mask.size) * 100
-                report.append(f"Slice {frame_idx}: {coverage:.1f}% coverage\n")
-        
-        # Save report
-        file_name = st.session_state.get("uploaded_file_name", "output")
-        base_name = os.path.splitext(file_name.replace('.nii.gz', ''))[0]  # Remove .nii or .nii.gz
-        output_dir = os.path.join("output", f"sam2_{base_name}")
-        os.makedirs(output_dir, exist_ok=True)
-        report_path = os.path.join(output_dir, "sam2_propagation_report.txt")
-        
-        with open(report_path, 'w') as f:
-            f.writelines(report)
-        
-        st.success(f"✅ Report saved to: {report_path}")
-        
-    except Exception as e:
-        st.error(f"❌ Error generating report: {str(e)}")
-
-def show_detailed_results():
-    """Mostra resultados detalhados"""
-    if "sam_propagation_results" not in st.session_state:
-        st.error("No propagation results found.")
         return
     
-    slice_segments = st.session_state["sam_propagation_results"]
-    slice_paths = st.session_state["sam_slice_paths"]
+    if not SAM2_VIDEO_AVAILABLE:
+        st.error("SAM2 video predictor not available. Please install the complete SAM2 package.")
+        st.code("pip install git+https://github.com/facebookresearch/segment-anything-2.git")
+        return
     
-    st.subheader("🔍 Detailed Propagation Results")
+    file_name = st.session_state["sam_file_name"]
+    image_data = st.session_state["sam_image_data"]
+    best_mask = st.session_state["sam_best_mask"]
+    bbox = st.session_state["sam_bounding_box"]
+    inference_frame_idx = st.session_state.get("sam_inference_frame", 0)
     
-    # Seletor de slice
-    available_slices = sorted(slice_segments.keys())
-    selected_slice = st.selectbox("Select slice to view:", available_slices)
+    st.write(f"### Propagating segmentation across all slices: `{st.session_state['sam_selected_file']}`")
+    st.write(f"**Total slices to process:** {image_data.shape[2]}")
     
-    if selected_slice in slice_segments:
-        # Carregar e mostrar imagem
-        img = Image.open(slice_paths[selected_slice])
+    # Create temporary directory for video frames
+    if "sam_temp_dir" not in st.session_state:
+        st.session_state["sam_temp_dir"] = tempfile.mkdtemp()
+    
+    temp_dir = st.session_state["sam_temp_dir"]
+    
+    try:
+        # Prepare video frames
+        with st.spinner("Preparing video frames from medical image slices..."):
+            frame_names = prepare_video_frames(image_data, temp_dir)
+            st.session_state["sam_frame_names"] = frame_names
+            st.success(f"Prepared {len(frame_names)} frames")
         
-        fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+        # Initialize video predictor
+        with st.spinner("Initializing SAM2 video predictor..."):
+            # Try different config options for video predictor
+            config_options = [
+                "sam2.1_hiera_l.yaml",
+                "configs/sam2.1_hiera_l.yaml",
+                "sam2.1/sam2.1_hiera_l.yaml"
+            ]
+            
+            checkpoint_path = "checkpoints/sam2.1_hiera_large.pt"
+            predictor = None
+            
+            for config in config_options:
+                try:
+                    predictor = build_sam2_video_predictor(config, checkpoint_path)
+                    break
+                except Exception as e:
+                    continue
+            
+            if predictor is None:
+                st.error("Failed to initialize SAM2 video predictor")
+                return
+            
+            st.success("Video predictor initialized")
         
-        # Imagem original
-        axes[0].imshow(img)
-        axes[0].set_title(f"Original Slice {selected_slice}")
-        axes[0].axis('off')
+        # Run propagation
+        with st.spinner("Running SAM2 propagation across all slices..."):
+            # Initialize inference state
+            inference_state = predictor.init_state(video_path=temp_dir)
+            predictor.reset_state(inference_state)
+            
+            # Add bounding box to the inference frame (central slice)
+            _, out_obj_ids, out_mask_logits = predictor.add_new_points_or_box(
+                inference_state=inference_state,
+                frame_idx=inference_frame_idx,
+                obj_id=0,  # First object
+                box=bbox,
+            )
+            
+            # Run propagation throughout the video
+            video_segments = {}
+            progress_bar = st.progress(0)
+            frame_count = 0
+            
+            for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(inference_state):
+                video_segments[out_frame_idx] = {
+                    out_obj_id: (out_mask_logits[i] > 0.0).cpu().numpy()
+                    for i, out_obj_id in enumerate(out_obj_ids)
+                }
+                frame_count += 1
+                progress_bar.progress(frame_count / len(frame_names))
+            
+            st.session_state["sam_video_segments"] = video_segments
+            st.session_state["sam_inference_state"] = inference_state
+            st.success(f"Propagation completed! Processed {len(video_segments)} frames")
         
-        # Imagem com máscara
-        axes[1].imshow(img)
-        for obj_id, mask in slice_segments[selected_slice].items():
-            axes[1].imshow(mask, alpha=0.6, cmap='viridis')
-        axes[1].set_title(f"Slice {selected_slice} with SAM2 Mask")
-        axes[1].axis('off')
+        # Display results
+        st.subheader("Propagation Results")
         
-        plt.tight_layout()
-        st.pyplot(fig)
-        plt.close()
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Total Frames", len(frame_names))
+            st.metric("Processed Frames", len(video_segments))
+        with col2:
+            st.metric("Objects per Frame", len(out_obj_ids))
+            coverage = len(video_segments) / len(frame_names) * 100
+            st.metric("Coverage", f"{coverage:.1f}%")
         
-        # Estatísticas
-        for obj_id, mask in slice_segments[selected_slice].items():
-            coverage = (np.sum(mask) / mask.size) * 100
-            st.write(f"**Object {obj_id}:** {coverage:.1f}% coverage, {np.sum(mask):,} pixels")
-
-def cleanup_temp_files():
-    """Limpa arquivos temporários"""
-    if "sam_temp_dir" in st.session_state:
-        try:
-            temp_dir = st.session_state["sam_temp_dir"]
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
-            del st.session_state["sam_temp_dir"]
-        except Exception as e:
-            st.warning(f"Could not clean temporary files: {str(e)}")
+        # Visualize sample results
+        st.subheader("Sample Propagation Results")
+        fig = visualize_propagation_results(video_segments, frame_names)
+        if fig:
+            st.pyplot(fig)
+        
+        # Show processing summary
+        with st.expander("Detailed Results"):
+            st.write("**Frame-by-frame summary:**")
+            for frame_idx in sorted(list(video_segments.keys())[:10]):  # Show first 10
+                masks = video_segments[frame_idx]
+                st.write(f"Frame {frame_idx}: {len(masks)} objects")
+                for obj_id, mask in masks.items():
+                    coverage = np.sum(mask) / mask.size * 100
+                    st.write(f"  Object {obj_id}: {coverage:.1f}% coverage")
+            
+            if len(video_segments) > 10:
+                st.write(f"... and {len(video_segments) - 10} more frames")
+        
+        # Navigation
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("← Back to Inference"):
+                st.session_state["current_step"] = "sam_inference"
+                st.rerun()
+        
+        with col2:
+            if st.button("🔄 Re-run Propagation"):
+                # Clear results and re-run
+                keys_to_clear = ["sam_video_segments", "sam_inference_state"]
+                for key in keys_to_clear:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                st.rerun()
+        
+        with col3:
+            if st.button("✅ Complete Processing", type="primary"):
+                st.session_state["current_step"] = "sam_process"
+                st.rerun()
+                
+    except Exception as e:
+        st.error(f"Error during propagation: {str(e)}")
+        st.exception(e)
+        
+    finally:
+        # Cleanup temporary directory on session end
+        if st.button("🧹 Clean Temporary Files"):
+            if "sam_temp_dir" in st.session_state and os.path.exists(st.session_state["sam_temp_dir"]):
+                shutil.rmtree(st.session_state["sam_temp_dir"])
+                del st.session_state["sam_temp_dir"]
+                st.success("Temporary files cleaned up")

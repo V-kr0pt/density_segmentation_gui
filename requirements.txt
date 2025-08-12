@@ -50,9 +50,8 @@ tzdata==2025.2
 urllib3==2.5.0
 watchdog==5.0.3
 
-# SAM2 dependencies
-torch>=2.0.0
-torchvision>=0.15.0
-torchaudio>=2.0.0
+# SAM2 dependencies - PyTorch CUDA versions are installed via install_pytorch_cuda.sh
+# Regular dependencies that can be installed normally
 git+https://github.com/facebookresearch/segment-anything-2.git
 supervision>=0.16.0
+
