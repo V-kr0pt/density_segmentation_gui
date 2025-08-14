@@ -71,7 +71,7 @@ def file_selection_step():
     
     st.markdown("""
     <div class="step-container">
-        <p>Choose NIfTI (.nii) files or DICOM folders for batch processing.</p>
+        <p>Choose NIfTI (.nii or .nii.gz) files or DICOM folders for batch processing.</p>
     </div>
     """, unsafe_allow_html=True)
     

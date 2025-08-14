@@ -79,7 +79,7 @@ The application will automatically open in your default web browser at `http://l
 ### Workflow
 
 #### Step 1: Draw Mask
-1. Place your NIfTI files (`.nii` format) in the `media/` directory
+1. Place your NIfTI files (`.nii` or `.nii.gz` format) in the `media/` directory
 2. Select a file from the dropdown menu
 3. Use the interactive canvas to draw masks on your medical images
 4. Adjust drawing parameters as needed

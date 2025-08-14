@@ -82,7 +82,7 @@ def main():
             st.markdown("""
             <div class="feature-card">
                 <h4>How it works</h4>
-                <p><strong>1. Select files:</strong> Choose your NIfTI (.nii) or DICOM files from the media directory</p>
+                <p><strong>1. Select files:</strong> Choose your NIfTI (.nii or .nii.gz) or DICOM files from the media directory</p>
                 <p><strong>2. Draw masks:</strong> Create interactive masks for each image</p>
                 <p><strong>3. Set thresholds:</strong> Adjust parameters for optimal segmentation</p>
                 <p><strong>4. Process:</strong> Generate results with batch processing</p>
