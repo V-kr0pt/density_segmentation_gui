@@ -8,3 +8,4 @@ DBT-P00125
 venv
 *.onnx
 config.json
+media/*

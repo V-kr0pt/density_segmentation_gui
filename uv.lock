@@ -225,6 +225,7 @@ dependencies = [
     { name = "matplotlib" },
     { name = "nibabel" },
     { name = "opencv-python" },
+    { name = "pydicom" },
     { name = "streamlit" },
     { name = "streamlit-drawable-canvas" },
 ]
@@ -234,6 +235,7 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.10.3" },
     { name = "nibabel", specifier = ">=5.3.2" },
     { name = "opencv-python", specifier = ">=4.12.0.88" },
+    { name = "pydicom", specifier = ">=3.0.1" },
     { name = "streamlit", specifier = "==1.40.0" },
     { name = "streamlit-drawable-canvas", specifier = ">=0.9.3" },
 ]
@@ -908,6 +910,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a1/ca/40e14e196864a0f61a92abb14d09b3d3da98f94ccb03b49cf51688140dab/pydeck-0.9.1.tar.gz", hash = "sha256:f74475ae637951d63f2ee58326757f8d4f9cd9f2a457cf42950715003e2cb605", size = 3832240, upload-time = "2024-05-10T15:36:21.153Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ab/4c/b888e6cf58bd9db9c93f40d1c6be8283ff49d88919231afe93a6bcf61626/pydeck-0.9.1-py2.py3-none-any.whl", hash = "sha256:b3f75ba0d273fc917094fa61224f3f6076ca8752b93d46faf3bcfd9f9d59b038", size = 6900403, upload-time = "2024-05-10T15:36:17.36Z" },
+]
+
+[[package]]
+name = "pydicom"
+version = "3.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d7/6f/55ea163b344c91df2e03c007bebf94781f0817656e2c037d7c5bf86c3bfc/pydicom-3.0.1.tar.gz", hash = "sha256:7b8be344b5b62493c9452ba6f5a299f78f8a6ab79786c729b0613698209603ec", size = 2884731, upload-time = "2024-09-22T02:02:43.202Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/27/a6/98651e752a49f341aa99aa3f6c8ba361728dfc064242884355419df63669/pydicom-3.0.1-py3-none-any.whl", hash = "sha256:db32f78b2641bd7972096b8289111ddab01fb221610de8d7afa835eb938adb41", size = 2376126, upload-time = "2024-09-22T02:02:41.616Z" },
 ]
 
 [[package]]
