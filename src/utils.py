@@ -25,7 +25,9 @@ class ImageOperations:
         img = nib.load(file_path)
 
         affine = img.affine
-        data = img.dataobj  # acesso preguiçoso
+        data = img.dataobj  # lazy loading
+        data = ImageOperations.rearrange_dimensions(data)
+        
         nb_of_slices = data.shape[0]
         idx = nb_of_slices // 2
         slice_ = np.asarray(data[idx], dtype=dtype)
@@ -34,6 +36,7 @@ class ImageOperations:
     @staticmethod
     def load_nii_central_slice(file_path, dtype=np.float32, flip=False):
         nii = nib.load(file_path).get_fdata()
+        nii = ImageOperations.rearrange_dimensions(nii)
         idx = nii.shape[0] // 2
         central_slice = nii[idx].astype(dtype)
         central_slice = np.rot90(central_slice)  # Rotate the slice for vertical orientation
@@ -50,7 +53,7 @@ class ImageOperations:
 
     @staticmethod
     def load_image(file_path):
-        if file_path.endswith('.nii'):
+        if file_path.lower().endswith('.nii') or file_path.lower().endswith('.nii.gz'):
             slice_image, affine, nb_of_slices = ImageOperations.load_nii_central_slice_lazy(file_path)
         else:
             slice_image, affine, nb_of_slices = ImageOperations.load_dicom_central_slice_lazy(file_path)
@@ -91,10 +94,10 @@ class ImageOperations:
         if os.path.isdir(file_path):
             central_slice, _, _ = ImageOperations.load_dicom_central_slice_lazy(file_path, dtype=dtype, flip=flip)
             return np.rot90(central_slice)
-        elif file_path.lower().endswith(".nii"):
+        elif file_path.lower().endswith('.nii') or file_path.lower().endswith('.nii.gz'):
             return ImageOperations.load_nii_central_slice(file_path, dtype=dtype, flip=flip)
         else:
-            raise ValueError(f"Formato não suportado: {file_path}")
+            raise ValueError(f"Not supported file format: {file_path}. Expected .nii or DICOM folder.")
     
     @staticmethod
     def load_dicom_slice(file_path, slice_index, dtype=np.float32):
@@ -119,6 +122,7 @@ class ImageOperations:
     def load_nii_slice(file_path, slice_index, dtype=np.float32):
         nii_obj = nib.load(file_path)
         nii_data = nii_obj.get_fdata()
+        nii_data = ImageOperations.rearrange_dimensions(nii_data)
         slice_data = nii_data[slice_index, :, :]
         del nii_data, nii_obj
         gc.collect()
@@ -127,7 +131,7 @@ class ImageOperations:
         return slice_data
     
     def load_any_slice(file_path, slice_index, dtype=np.float32):
-        if file_path.lower().endswith('.nii'):
+        if file_path.lower().endswith('.nii') or file_path.lower().endswith('.nii.gz'):
             return ImageOperations.load_nii_slice(file_path, slice_index, dtype=dtype)
         elif os.path.isdir(file_path):
             return ImageOperations.load_dicom_slice(file_path, slice_index, dtype=dtype)

@@ -128,7 +128,7 @@ def file_selection_step():
 
     # Get all .nii files
     all_files_inside_input = os.listdir(input_folder)
-    all_nii_files = [f for f in all_files_inside_input if f.endswith('.nii')]
+    all_nii_files = [f for f in all_files_inside_input if (f.endswith('.nii') or f.endswith('.nii.gz'))]
     all_dicom_folders = [f for f in all_files_inside_input if os.path.isdir(os.path.join(input_folder, f))]
     # check if there are .dicom files inside the folder
     all_dicom_folders = [f for f in all_dicom_folders if any(
