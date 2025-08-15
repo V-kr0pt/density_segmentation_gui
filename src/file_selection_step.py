@@ -163,7 +163,7 @@ def file_selection_step():
     selected_files = st.multiselect(
         "Select files to process:",
         available_files,
-        default=available_files if len(available_files) <= 5 else available_files[:5]
+        default=available_files if len(available_files) <= 20 else available_files[:20]
     )
     
     if len(selected_files) == 0:
