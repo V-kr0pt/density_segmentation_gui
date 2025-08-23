@@ -577,36 +577,44 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
                 first_mask = roi_masks[0]
                 threshold_value = threshold_data.get('threshold', 0.5)  # Changed from 'upper_threshold' to 'threshold'
                 
-                # Create threshold visualization
+                # Create threshold visualization exactly like batch_threshold_step
                 fig, axes = plt.subplots(1, 4, figsize=(20, 5))
                 
-                # Original ROI slice
-                roi_norm = (first_slice - np.min(first_slice)) / (np.max(first_slice) - np.min(first_slice) + 1e-8)
-                axes[0].imshow(roi_norm, cmap='gray')
-                axes[0].set_title('Original ROI Slice')
+                # 1. Original ROI slice (like batch_threshold_step)
+                axes[0].imshow(first_slice, cmap='gray')
+                axes[0].set_title('Original ROI')
                 axes[0].axis('off')
                 
-                # Mask overlay
-                axes[1].imshow(roi_norm, cmap='gray')
-                mask_overlay = np.ma.masked_where(first_mask == 0, first_mask)
-                axes[1].imshow(mask_overlay, cmap='jet', alpha=0.6)
-                axes[1].set_title('ROI with Mask')
+                # 2. Mask overlay
+                axes[1].imshow(first_slice, cmap='gray')
+                axes[1].imshow(first_mask, cmap='jet', alpha=0.3)
+                axes[1].set_title('ROI + Mask')
                 axes[1].axis('off')
                 
-                # Apply threshold visualization (binary mask - for reference only)
+                # 3. Threshold applied exactly like batch_threshold_step
                 if isinstance(threshold_value, (int, float)):
-                    thresholded_preview = apply_safe_threshold(first_slice, first_mask, threshold_value)
-                    axes[2].imshow(thresholded_preview, cmap='gray')
-                    axes[2].set_title(f'Threshold Mask (T={threshold_value:.2f})')
+                    # Apply threshold using same logic as ThresholdOperations.threshold_image
+                    mn, mx = first_slice.min(), first_slice.max()
+                    norm = (first_slice - mn) / (mx - mn) if mx > mn else np.zeros_like(first_slice)
+                    bin_mask = (norm > threshold_value) & (first_mask > 0)
+                    
+                    # Display exactly like batch_threshold_step
+                    axes[2].imshow(first_slice, cmap='gray')  # Original image in grayscale
+                    axes[2].imshow(bin_mask, cmap='jet', alpha=0.2)  # Threshold mask with transparency
+                    axes[2].set_title(f'Thresholded (T={threshold_value:.2f})')
                 else:
-                    axes[2].imshow(first_mask, cmap='gray')
+                    axes[2].imshow(first_slice, cmap='gray')
+                    axes[2].imshow(first_mask, cmap='jet', alpha=0.2)
                     axes[2].set_title('Original Mask')
                 axes[2].axis('off')
                 
-                # Show what will actually be processed (normalized image)
-                normalized_for_sam2 = safe_normalize_for_sam2(first_slice)
-                axes[3].imshow(normalized_for_sam2, cmap='gray')
-                axes[3].set_title('Normalized for SAM2')
+                # 4. Final binary mask for SAM2
+                if isinstance(threshold_value, (int, float)):
+                    axes[3].imshow(bin_mask, cmap='gray')
+                    axes[3].set_title('Binary Mask for SAM2')
+                else:
+                    axes[3].imshow(first_mask, cmap='gray')
+                    axes[3].set_title('Original Mask for SAM2')
                 axes[3].axis('off')
                 
                 plt.tight_layout()
