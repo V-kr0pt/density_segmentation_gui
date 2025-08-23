@@ -134,8 +134,12 @@ def batch_threshold_step():
     # Find next file to process
     if current_index >= len(batch_files):
         # All files processed for threshold step
+        processing_mode = st.session_state.get("processing_mode", "traditional")
+        mode_text = "SAM2 Processing" if processing_mode == "sam2" else "Traditional Processing"
+        mode_icon = "🤖" if processing_mode == "sam2" else "⚙️"
+        
         st.success("🎉 All thresholds have been set!")
-        if st.button("→ Continue to Process Step"):
+        if st.button(f"→ Continue to {mode_icon} {mode_text}"):
             st.session_state["current_step"] = "batch_process"
             st.rerun()
         if st.button("Back to Draw Step"):

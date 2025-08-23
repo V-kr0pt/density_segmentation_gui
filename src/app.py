@@ -2,6 +2,7 @@ from file_selection_step import file_selection_step
 from batch_draw_step import batch_draw_step
 from batch_threshold_step import batch_threshold_step
 from batch_process_step import batch_process_step
+from batch_sam2_process_step import batch_sam2_process_step
 import streamlit as st
 
 # ================== Main App ==================
@@ -65,6 +66,9 @@ def main():
     if "current_step" not in st.session_state:
         st.session_state["current_step"] = "mode_selection"
     
+    if "processing_mode" not in st.session_state:
+        st.session_state["processing_mode"] = "traditional"
+    
     # Mode selection
     if st.session_state["current_step"] == "mode_selection":
         # Welcome section
@@ -82,12 +86,44 @@ def main():
             st.markdown("""
             <div class="feature-card">
                 <h4>How it works</h4>
-                <p><strong>1. Select files:</strong> Choose your NIfTI (.nii) or DICOM files from the media directory</p>
+                <p><strong>1. Select files:</strong> Choose your NIfTI (.nii or .nii.gz) or DICOM files from the media directory</p>
                 <p><strong>2. Draw masks:</strong> Create interactive masks for each image</p>
                 <p><strong>3. Set thresholds:</strong> Adjust parameters for optimal segmentation</p>
                 <p><strong>4. Process:</strong> Generate results with batch processing</p>
             </div>
             """, unsafe_allow_html=True)
+            
+            # Add spacing
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            # Mode selection
+            st.markdown("### 🎯 Select Processing Mode")
+            
+            mode = st.radio(
+                "Choose your segmentation approach:",
+                options=["traditional", "sam2"],
+                format_func=lambda x: "🔧 Traditional Mode (Dynamic Thresholding)" if x == "traditional" 
+                                    else "🤖 SAM2 Mode (AI Video Propagation)",
+                key="mode_selection_radio"
+            )
+            
+            if mode == "traditional":
+                st.info("""
+                **Traditional Mode:** Uses dynamic thresholding for slice-by-slice segmentation.
+                - Fast processing
+                - Parameter-based approach
+                - Good for consistent density regions
+                """)
+            else:
+                st.info("""
+                **SAM2 Mode:** Uses AI-powered video propagation for advanced segmentation.
+                - First slice: Threshold + SAM2 inference
+                - Remaining slices: SAM2 video propagation
+                - Better temporal consistency
+                - Requires SAM2 installation
+                """)
+            
+            st.session_state["processing_mode"] = mode
             
             # Add spacing
             st.markdown("<br>", unsafe_allow_html=True)
@@ -113,7 +149,12 @@ def main():
     elif st.session_state["current_step"] == "batch_threshold":
         batch_threshold_step()
     elif st.session_state["current_step"] == "batch_process":
-        batch_process_step()
+        # Route to appropriate processing mode
+        processing_mode = st.session_state.get("processing_mode", "traditional")
+        if processing_mode == "sam2":
+            batch_sam2_process_step()
+        else:
+            batch_process_step()
     
     # Prettier navigation sidebar
     with st.sidebar:
@@ -147,7 +188,7 @@ def main():
             if "batch_completed_files" in st.session_state:
                 # Keep batch progress if user wants to continue
                 if st.checkbox("📂 Keep current progress"):
-                    keys_to_keep = ["batch_files", "batch_completed_files", "batch_final_thresholds", "batch_thresholds"]
+                    keys_to_keep = ["batch_files", "batch_completed_files", "batch_final_thresholds", "batch_thresholds", "processing_mode"]
             
             keys_to_remove = [key for key in st.session_state.keys() if key not in keys_to_keep]
             for key in keys_to_remove:
@@ -158,6 +199,8 @@ def main():
         
         # Show current step with prettier styling
         current_step = st.session_state.get("current_step", "mode_selection")
+        processing_mode = st.session_state.get("processing_mode", "traditional")
+        
         if current_step == "file_selection":
             step_text = "📂 File Selection"
         elif current_step == "batch_draw":
@@ -165,11 +208,19 @@ def main():
         elif current_step == "batch_threshold":
             step_text = "🎯 Setting Thresholds"
         elif current_step == "batch_process":
-            step_text = "⚙️ Processing Files"
+            if processing_mode == "sam2":
+                step_text = "🤖 SAM2 Processing"
+            else:
+                step_text = "⚙️ Processing Files"
         else:
             step_text = "🏠 Main Menu"
         
         st.markdown(f'<div class="current-step"><strong>Current Step:</strong><br>{step_text}</div>', unsafe_allow_html=True)
+        
+        # Show processing mode
+        if current_step != "mode_selection":
+            mode_text = "🤖 SAM2 Mode" if processing_mode == "sam2" else "🔧 Traditional Mode"
+            st.markdown(f'<div class="current-step"><strong>Mode:</strong><br>{mode_text}</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()

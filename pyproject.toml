@@ -11,4 +11,8 @@ dependencies = [
     "pydicom>=3.0.1",
     "streamlit==1.40.0",
     "streamlit-drawable-canvas>=0.9.3",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "torchaudio>=2.0.0",
+    "supervision>=0.16.0",
 ]
