@@ -490,11 +490,12 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
     def update_progress(step, total_steps, current_step_name):
         """Helper function to update progress"""
         if progress_placeholder:
-            progress = step / total_steps
+            # Ensure progress doesn't exceed 1.0
+            progress = min(1.0, max(0.0, step / total_steps))
             progress_placeholder.progress(progress, text=f"Step {step}/{total_steps}: {current_step_name}")
     
     try:
-        total_steps = 8  # Total processing steps
+        total_steps = 9  # Updated total processing steps
         current_step = 0
         
         current_step += 1
@@ -567,6 +568,62 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         # Process slices for SAM2
         processed_slices = []
         
+        # Show threshold visualization for first slice
+        if visualization_placeholder and len(roi_slices) > 0 and len(roi_masks) > 0:
+            try:
+                import matplotlib.pyplot as plt
+                
+                first_slice = roi_slices[0]
+                first_mask = roi_masks[0]
+                threshold_value = threshold_data.get('upper_threshold', 0.5)
+                
+                # Create threshold visualization
+                fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+                
+                # Original ROI slice
+                roi_norm = (first_slice - np.min(first_slice)) / (np.max(first_slice) - np.min(first_slice) + 1e-8)
+                axes[0].imshow(roi_norm, cmap='gray')
+                axes[0].set_title('Original ROI Slice')
+                axes[0].axis('off')
+                
+                # Mask overlay
+                axes[1].imshow(roi_norm, cmap='gray')
+                mask_overlay = np.ma.masked_where(first_mask == 0, first_mask)
+                axes[1].imshow(mask_overlay, cmap='jet', alpha=0.6)
+                axes[1].set_title('ROI with Mask')
+                axes[1].axis('off')
+                
+                # Apply threshold visualization
+                if isinstance(threshold_value, (int, float)):
+                    thresholded_preview = apply_safe_threshold(first_slice, first_mask, threshold_value)
+                    axes[2].imshow(thresholded_preview, cmap='gray')
+                    axes[2].set_title(f'Thresholded (T={threshold_value:.2f})')
+                else:
+                    normalized_preview = safe_normalize_for_sam2(first_slice)
+                    axes[2].imshow(normalized_preview, cmap='gray')
+                    axes[2].set_title('Normalized')
+                axes[2].axis('off')
+                
+                # Create preview of what will be processed
+                if isinstance(threshold_value, (int, float)):
+                    preview_processed = apply_safe_threshold(first_slice, first_mask, threshold_value)
+                else:
+                    preview_processed = safe_normalize_for_sam2(first_slice)
+                
+                axes[3].imshow(preview_processed, cmap='gray')
+                axes[3].set_title('Will be Processed')
+                axes[3].axis('off')
+                
+                plt.tight_layout()
+                
+                # Update visualization before processing
+                with visualization_placeholder.container():
+                    st.pyplot(fig)
+                    st.write(f"**Threshold Settings:** Upper = {threshold_value}")
+                
+            except Exception as viz_error:
+                print(f"Threshold visualization error: {viz_error}")
+        
         for slice_idx, (roi_slice, roi_mask) in enumerate(zip(roi_slices, roi_masks)):
             if slice_idx == 0:
                 # Apply threshold to first slice
@@ -593,6 +650,34 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
             return False, "Failed to create temporary JPEG folder for SAM2", None
         
         update_status(f"Created {len(frame_names)} JPEG frames successfully")
+        
+        # Show sample frame visualization
+        if visualization_placeholder and len(processed_slices) > 0:
+            try:
+                import matplotlib.pyplot as plt
+                
+                # Show first few frames as samples
+                num_samples = min(4, len(processed_slices))
+                fig, axes = plt.subplots(1, num_samples, figsize=(15, 4))
+                
+                if num_samples == 1:
+                    axes = [axes]
+                
+                for i in range(num_samples):
+                    slice_data = processed_slices[i]
+                    axes[i].imshow(slice_data, cmap='gray')
+                    axes[i].set_title(f'Frame {i:05d}.jpg')
+                    axes[i].axis('off')
+                
+                plt.suptitle(f'Sample JPEG Frames (Total: {len(frame_names)})')
+                plt.tight_layout()
+                
+                with visualization_placeholder.container():
+                    st.pyplot(fig)
+                    st.write(f"**JPEG Conversion:** {len(frame_names)} frames created for SAM2 video processing")
+                
+            except Exception as viz_error:
+                print(f"JPEG visualization error: {viz_error}")
         
         try:
             current_step += 1
@@ -693,6 +778,36 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
             print(f"Mask propagation completed: {prop_message}")
             print(f"Processed frames: {sorted(video_segments.keys())}")
             
+            # Show propagation results visualization
+            if visualization_placeholder and len(video_segments) > 0:
+                try:
+                    import matplotlib.pyplot as plt
+                    
+                    # Show sample propagated masks
+                    sample_frames = sorted(list(video_segments.keys()))[:4]  # First 4 frames
+                    if len(sample_frames) > 0:
+                        fig, axes = plt.subplots(1, len(sample_frames), figsize=(15, 4))
+                        
+                        if len(sample_frames) == 1:
+                            axes = [axes]
+                        
+                        for i, frame_idx in enumerate(sample_frames):
+                            if 1 in video_segments[frame_idx]:  # Object ID 1
+                                mask = video_segments[frame_idx][1]
+                                axes[i].imshow(mask, cmap='jet')
+                                axes[i].set_title(f'Frame {frame_idx}')
+                                axes[i].axis('off')
+                        
+                        plt.suptitle(f'SAM2 Propagated Masks (Total: {len(video_segments)} frames)')
+                        plt.tight_layout()
+                        
+                        with visualization_placeholder.container():
+                            st.pyplot(fig)
+                            st.write(f"**SAM2 Results:** Successfully propagated to {len(video_segments)} frames")
+                
+                except Exception as viz_error:
+                    print(f"Results visualization error: {viz_error}")
+            
             # Convert results back to full image space (traditional approach)
             current_step += 1
             update_status("Converting results back to full image space...")
@@ -755,6 +870,10 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         }
         
         # Save output (following traditional format)
+        current_step += 1
+        update_status("Saving results...")
+        update_progress(current_step, total_steps, "Saving output")
+        
         output_filename = os.path.basename(nifti_path).replace('.nii', '_sam2_result.nii')
         output_path = os.path.join(output_dir, output_filename)
         
