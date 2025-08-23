@@ -76,6 +76,75 @@ def test_sam2_installation():
     
     return True
 
+def create_temp_jpeg_folder(processed_slices, temp_dir_base="temp_sam2_frames"):
+    """
+    Create a temporary directory with JPEG files for SAM2 video processing
+    
+    Args:
+        processed_slices: List of 2D numpy arrays (grayscale images)
+        temp_dir_base: Base name for temporary directory
+    
+    Returns:
+        temp_dir_path: Path to the created directory
+        frame_names: List of frame filenames
+        success: Boolean indicating success
+    """
+    try:
+        import tempfile
+        import shutil
+        from PIL import Image
+        
+        # Create temporary directory
+        temp_dir = tempfile.mkdtemp(prefix=temp_dir_base)
+        frame_names = []
+        
+        for i, slice_data in enumerate(processed_slices):
+            # Ensure slice is 2D
+            if len(slice_data.shape) == 3:
+                slice_data = slice_data[:, :, 0]  # Take first channel
+            
+            # Normalize to 0-255 range for JPEG
+            if slice_data.dtype != np.uint8:
+                slice_min = np.min(slice_data)
+                slice_max = np.max(slice_data)
+                if slice_max > slice_min:
+                    slice_normalized = ((slice_data - slice_min) / (slice_max - slice_min) * 255).astype(np.uint8)
+                else:
+                    slice_normalized = np.zeros_like(slice_data, dtype=np.uint8)
+            else:
+                slice_normalized = slice_data
+            
+            # Convert to RGB for SAM2 (SAM2 expects 3-channel images)
+            slice_rgb = np.stack([slice_normalized] * 3, axis=-1)
+            
+            # Create filename with zero-padding for proper sorting
+            frame_filename = f"{i:05d}.jpg"  # e.g., "00000.jpg", "00001.jpg"
+            frame_path = os.path.join(temp_dir, frame_filename)
+            
+            # Save as JPEG
+            pil_image = Image.fromarray(slice_rgb)
+            pil_image.save(frame_path, "JPEG", quality=95)
+            
+            frame_names.append(frame_filename)
+        
+        print(f"Created temporary JPEG folder: {temp_dir}")
+        print(f"Generated {len(frame_names)} frame files")
+        
+        return temp_dir, frame_names, True
+        
+    except Exception as e:
+        print(f"Error creating temporary JPEG folder: {e}")
+        return None, None, False
+
+def cleanup_temp_folder(temp_dir):
+    """Clean up temporary directory"""
+    try:
+        if temp_dir and os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+            print(f"Cleaned up temporary directory: {temp_dir}")
+    except Exception as e:
+        print(f"Error cleaning up temporary directory: {e}")
+
 def find_sam2_configs():
     """Find available SAM2 config files"""
     configs = []
@@ -190,27 +259,33 @@ class SAM2VideoManager:
         except Exception as e:
             return False, f"Unexpected error loading video model: {str(e)}"
     
-    def init_inference_state(self, video_frames):
-        """Initialize inference state for video prediction"""
+    def init_inference_state(self, video_dir_path):
+        """Initialize inference state for video prediction using JPEG folder"""
         if not self.model_loaded:
             return False, "Video model not loaded"
         
         try:
-            self.inference_state = self.video_predictor.init_state(video_frames)
+            # SAM2 expects a directory path with JPEG files, not frames in memory
+            self.inference_state = self.video_predictor.init_state(video_path=video_dir_path)
             return True, "Inference state initialized successfully"
         except Exception as e:
             return False, f"Error initializing inference state: {str(e)}"
     
-    def add_first_frame_mask(self, frame_idx, mask, obj_id=1):
-        """Add mask for the first frame to guide propagation"""
+    def add_new_box_and_get_mask(self, frame_idx, obj_id, box):
+        """Add box and get mask predictions for SAM2 video"""
         if self.inference_state is None:
-            return False, "Inference state not initialized"
+            return None, None, "Inference state not initialized"
         
         try:
-            self.video_predictor.add_new_mask(self.inference_state, frame_idx, obj_id, mask)
-            return True, "First frame mask added successfully"
+            _, out_obj_ids, out_mask_logits = self.video_predictor.add_new_points_or_box(
+                inference_state=self.inference_state,
+                frame_idx=frame_idx,
+                obj_id=obj_id,
+                box=box,
+            )
+            return out_obj_ids, out_mask_logits, "Box added successfully"
         except Exception as e:
-            return False, f"Error adding first frame mask: {str(e)}"
+            return None, None, f"Error adding box: {str(e)}"
     
     def propagate_masks(self):
         """Propagate masks through video frames"""
@@ -347,155 +422,142 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
                 # Keep original for other slices
                 processed_slices.append(safe_normalize_for_sam2(roi_slice))
         
-        # Convert to format suitable for SAM2 video predictor
-        video_frames = []
-        for slice_data in processed_slices:
-            # Convert to 3-channel RGB
-            if len(slice_data.shape) == 2:
-                slice_rgb = np.stack([slice_data] * 3, axis=-1)
-            else:
-                slice_rgb = slice_data
+        # Convert to format suitable for SAM2 video predictor using JPEG folder approach
+        print("Creating temporary JPEG folder for SAM2...")
+        temp_video_dir, frame_names, jpeg_success = create_temp_jpeg_folder(processed_slices)
+        
+        if not jpeg_success:
+            return False, "Failed to create temporary JPEG folder for SAM2", None
+        
+        try:
+            # Initialize SAM2 video manager with enhanced error handling
+            sam2_video = SAM2VideoManager()
             
-            video_frames.append(slice_rgb)
-        
-        # Validate that we have valid video frames
-        if len(video_frames) == 0:
-            return False, "No valid video frames generated", None
-        
-        # Check if frames have valid dimensions
-        for i, frame in enumerate(video_frames):
-            if frame.size == 0:
-                return False, f"Empty frame at index {i}", None
-        
-        # Initialize SAM2 video manager with enhanced error handling
-        sam2_video = SAM2VideoManager()
-        
-        # Load video model with improved config handling
-        print("Loading SAM2 video model...")
-        success, message = sam2_video.load_video_model()
-        if not success:
-            print(f"SAM2 video model loading failed: {message}")
-            # Try to provide more specific error information
-            if "config" in message.lower():
-                print("Config-related error detected. Checking available configs...")
-                configs = find_sam2_configs()
-                if configs:
-                    print(f"Found {len(configs)} potential configs:")
-                    for name, rel_path, full_path in configs[:3]:
-                        print(f"  - {name} at {rel_path}")
-                else:
-                    print("No suitable config files found in SAM2 installation")
+            # Load video model with improved config handling
+            print("Loading SAM2 video model...")
+            success, message = sam2_video.load_video_model()
+            if not success:
+                print(f"SAM2 video model loading failed: {message}")
+                # Try to provide more specific error information
+                if "config" in message.lower():
+                    print("Config-related error detected. Checking available configs...")
+                    configs = find_sam2_configs()
+                    if configs:
+                        print(f"Found {len(configs)} potential configs:")
+                        for name, rel_path, full_path in configs[:3]:
+                            print(f"  - {name} at {rel_path}")
+                    else:
+                        print("No suitable config files found in SAM2 installation")
+                
+                cleanup_temp_folder(temp_video_dir)
+                return False, f"Failed to load SAM2 video model: {message}", None
             
-            return False, f"Failed to load SAM2 video model: {message}", None
+            print(f"SAM2 video model loaded successfully: {message}")
+            
+            # Initialize inference state with JPEG folder path
+            success, message = sam2_video.init_inference_state(temp_video_dir)
+            if not success:
+                cleanup_temp_folder(temp_video_dir)
+                return False, f"Failed to initialize inference state: {message}", None
+            
+            print("Inference state initialized successfully")
+            
+            # Reset state for clean start
+            sam2_video.video_predictor.reset_state(sam2_video.inference_state)
+            
+            # Create bounding box from the initial mask for the first frame
+            first_frame_mask = roi_masks[0]
+            
+            # Find bounding box coordinates from the mask
+            y_coords, x_coords = np.where(first_frame_mask > 0)
+            if len(x_coords) == 0 or len(y_coords) == 0:
+                cleanup_temp_folder(temp_video_dir)
+                return False, "No valid region found in first frame mask", None
+            
+            # Create bounding box with some padding
+            padding = 5
+            bbox_x_min = max(0, np.min(x_coords) - padding)
+            bbox_y_min = max(0, np.min(y_coords) - padding)
+            bbox_x_max = min(first_frame_mask.shape[1], np.max(x_coords) + padding)
+            bbox_y_max = min(first_frame_mask.shape[0], np.max(y_coords) + padding)
+            
+            # SAM2 box format: [x_min, y_min, x_max, y_max]
+            bbox = np.array([bbox_x_min, bbox_y_min, bbox_x_max, bbox_y_max], dtype=np.float32)
+            
+            print(f"Using bounding box: {bbox}")
+            
+            # Add box to first frame (frame index 0, object id 1)
+            frame_idx = 0
+            obj_id = 1
+            
+            out_obj_ids, out_mask_logits, box_message = sam2_video.add_new_box_and_get_mask(
+                frame_idx, obj_id, bbox
+            )
+            
+            if out_obj_ids is None:
+                cleanup_temp_folder(temp_video_dir)
+                return False, f"Failed to add bounding box: {box_message}", None
+            
+            print(f"Bounding box added successfully: {box_message}")
+            
+            # Propagate masks through all frames
+            print("Starting mask propagation...")
+            video_segments, prop_message = sam2_video.propagate_masks()
+            if video_segments is None:
+                cleanup_temp_folder(temp_video_dir)
+                return False, f"Failed to propagate masks: {prop_message}", None
+            
+            print(f"Mask propagation completed: {prop_message}")
+            print(f"Processed frames: {sorted(video_segments.keys())}")
+            
+            # Convert results back to full image space
+            output_masks = []
+            x_min, y_min, x_max, y_max = roi_bounds
+            
+            for slice_idx in range(nii_data.shape[2]):
+                # Create full-size mask
+                full_mask = np.zeros((nii_data.shape[0], nii_data.shape[1]), dtype=np.uint8)
+                
+                # Check if we have a propagated mask for this slice
+                if slice_idx in video_segments and 1 in video_segments[slice_idx]:
+                    prop_mask = video_segments[slice_idx][1]  # Object ID 1
+                    
+                    # Ensure propagated mask is the right size for ROI
+                    roi_h = y_max - y_min
+                    roi_w = x_max - x_min
+                    
+                    if prop_mask.shape[0] != roi_h or prop_mask.shape[1] != roi_w:
+                        prop_mask = cv2.resize(prop_mask.astype(np.uint8), (roi_w, roi_h), interpolation=cv2.INTER_NEAREST)
+                    
+                    # Map back to full image
+                    full_mask[y_min:y_max, x_min:x_max] = (prop_mask > 0.5).astype(np.uint8)
+                
+                output_masks.append(full_mask)
+            
+        finally:
+            # Clean up temporary directory
+            cleanup_temp_folder(temp_video_dir)
         
-        print(f"SAM2 video model loaded successfully: {message}")
-        
-        # Initialize inference state
-        success, message = sam2_video.init_inference_state(video_frames)
-        if not success:
-            return False, f"Failed to initialize inference state: {message}", None
-        
-        # Create initial mask from thresholded first frame using simple approach
-        first_frame_thresholded = processed_slices[0]
-        first_frame_mask = roi_masks[0]
-        
-        # Create simple initial mask
-        initial_mask = create_simple_initial_mask(first_frame_thresholded, first_frame_mask)
-        if initial_mask is None:
-            return False, "Failed to create initial mask from thresholded data", None
-        
-        # Use SAM2 for automatic segmentation of the entire ROI (optional refinement)
-        sam2_image = SAM2Manager()
-        img_success, img_message = sam2_image.load_model()
-        
-        refined_mask = initial_mask.copy()  # Start with simple mask
-        
-        if img_success:
-            # Use SAM2 to automatically segment using box prompt covering entire region
-            set_success, set_message = sam2_image.set_image(video_frames[0])
-            if set_success:
-                try:
-                    # Create a box covering the entire initial mask region
-                    y_coords, x_coords = np.where(initial_mask > 0)
-                    if len(x_coords) > 0 and len(y_coords) > 0:
-                        try:
-                            # Create bounding box covering the entire region
-                            bbox_x1 = max(0, np.min(x_coords) - 5)
-                            bbox_y1 = max(0, np.min(y_coords) - 5)
-                            bbox_x2 = min(initial_mask.shape[1], np.max(x_coords) + 5)
-                            bbox_y2 = min(initial_mask.shape[0], np.max(y_coords) + 5)
-                            
-                            # Use box prompt for automatic segmentation
-                            input_box = np.array([bbox_x1, bbox_y1, bbox_x2, bbox_y2])
-                            
-                            masks, scores, pred_message = sam2_image.predict(
-                                input_boxes=input_box[None, :],
-                                multimask_output=False  # Single mask for the region
-                            )
-                            
-                            if masks is not None and len(masks) > 0:
-                                # Use SAM2 mask but constrain to original ROI
-                                sam2_mask = masks[0].astype(np.uint8)
-                                # Keep only parts within the original mask region
-                                refined_mask = sam2_mask & (first_frame_mask > 0).astype(np.uint8)
-                                
-                                # Ensure we still have a valid mask
-                                if np.sum(refined_mask) == 0:
-                                    refined_mask = initial_mask  # Fallback
-                        except Exception as inner_e:
-                            print(f"Box coordinate calculation failed: {inner_e}")
-                            refined_mask = initial_mask  # Fallback
-                        
-                except Exception as e:
-                    print(f"SAM2 refinement failed: {e}")
-                    refined_mask = initial_mask  # Fallback
-        
-        # Final validation of the mask to use
-        if refined_mask.size == 0 or np.sum(refined_mask) == 0:
-            return False, "Failed to generate valid segmentation mask for first frame", None
-        
-        # Add first frame mask to video predictor (use the refined mask)
-        success, message = sam2_video.add_first_frame_mask(0, refined_mask)
-        if not success:
-            return False, f"Failed to add first frame mask: {message}", None
-        
-        # Propagate masks through all frames
-        video_segments, prop_message = sam2_video.propagate_masks()
-        if video_segments is None:
-            return False, f"Failed to propagate masks: {prop_message}", None
-        
-        # Process results and save
+        # Prepare results
         results = {
-            'propagated_masks': video_segments,
-            'original_slices': roi_slices,  # Use roi_slices instead of original_slices
-            'roi_bounds': roi_bounds,
-            'num_slices': len(processed_slices)
+            "roi_bounds": roi_bounds,
+            "num_slices": len(output_masks),
+            "propagation_frames": len(video_segments)
         }
         
-        # Save propagated masks
-        filename = os.path.splitext(os.path.basename(nifti_path))[0]
-        mask_output_dir = os.path.join(output_dir, f"{filename}_sam2_masks")
-        os.makedirs(mask_output_dir, exist_ok=True)
+        # Save output
+        output_filename = os.path.basename(nifti_path).replace('.nii', '_sam2_result.nii')
+        output_path = os.path.join(output_dir, output_filename)
         
-        # Save each propagated mask
-        for frame_idx, frame_masks in video_segments.items():
-            for obj_id, mask in frame_masks.items():
-                mask_filename = f"slice_{frame_idx:03d}_obj_{obj_id}.png"
-                mask_path = os.path.join(mask_output_dir, mask_filename)
-                
-                # Convert mask to image and save
-                mask_img = (mask * 255).astype(np.uint8)
-                Image.fromarray(mask_img).save(mask_path)
+        # Create 3D output
+        output_3d = np.stack(output_masks, axis=2)
+        output_nii = nib.Nifti1Image(output_3d, nii_img.affine, nii_img.header)
+        nib.save(output_nii, output_path)
         
-        # Create combined visualization
-        create_sam2_visualization(
-            roi_slices,  # Use roi_slices instead of original_slices
-            video_segments, 
-            roi_bounds,  # Use roi_bounds instead of mask_bounds
-            os.path.join(output_dir, f"{filename}_sam2_visualization.png")
-        )
+        print(f"✅ SAM2 processing completed successfully")
+        print(f"Output saved to: {output_path}")
         
-        return True, "SAM2 propagation completed successfully", results
+        return True, "SAM2 processing completed successfully", results
         
     except Exception as e:
         return False, f"Error processing with SAM2: {str(e)}", None
