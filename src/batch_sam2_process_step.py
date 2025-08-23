@@ -76,6 +76,79 @@ def test_sam2_installation():
     
     return True
 
+def extract_roi_traditional_approach(nii_data, mask_data, middle_image_slice, middle_mask_slice, num_slices, padding=10):
+    """
+    Extract ROI using traditional approach like the working mode
+    
+    Args:
+        nii_data: 3D NIfTI data (slices, height, width)
+        mask_data: 3D mask data (slices, height, width)
+        middle_image_slice: Middle slice for ROI calculation (height, width)
+        middle_mask_slice: Middle mask slice (height, width)
+        num_slices: Number of slices
+        padding: Padding around ROI
+    
+    Returns:
+        roi_bounds, roi_slices, roi_masks, success
+    """
+    try:
+        print(f"Traditional ROI extraction for {num_slices} slices")
+        
+        # Find ROI bounds from the middle mask slice (like traditional mode)
+        y_coords, x_coords = np.where(middle_mask_slice > 0)
+        
+        if len(y_coords) == 0 or len(x_coords) == 0:
+            print("No mask data found in middle slice")
+            return None, None, None, False
+        
+        # Calculate bounds with padding
+        y_min = max(0, np.min(y_coords) - padding)
+        y_max = min(middle_image_slice.shape[0], np.max(y_coords) + padding)
+        x_min = max(0, np.min(x_coords) - padding)
+        x_max = min(middle_image_slice.shape[1], np.max(x_coords) + padding)
+        
+        print(f"ROI bounds: y({y_min},{y_max}) x({x_min},{x_max})")
+        
+        # Validate bounds
+        if y_min >= y_max or x_min >= x_max:
+            print("Invalid ROI bounds")
+            return None, None, None, False
+        
+        roi_bounds = (x_min, y_min, x_max, y_max)
+        
+        # Extract ROI from all slices (following traditional slice-by-slice approach)
+        roi_slices = []
+        roi_masks = []
+        
+        for slice_idx in range(num_slices):
+            # Extract slice like traditional mode: nii_data[slice_idx, :, :]
+            image_slice = nii_data[slice_idx, :, :]  # Shape: (height, width)
+            
+            # Extract corresponding mask slice
+            if slice_idx < mask_data.shape[0]:
+                mask_slice = mask_data[slice_idx, :, :]
+            else:
+                # Use last available mask slice if fewer mask slices than image slices
+                mask_slice = mask_data[-1, :, :]
+            
+            # Extract ROI from both image and mask
+            roi_image = image_slice[y_min:y_max, x_min:x_max]
+            roi_mask = mask_slice[y_min:y_max, x_min:x_max]
+            
+            roi_slices.append(roi_image)
+            roi_masks.append(roi_mask)
+        
+        print(f"Successfully extracted ROI from {len(roi_slices)} slices")
+        print(f"ROI size: {roi_slices[0].shape if roi_slices else 'None'}")
+        
+        return roi_bounds, roi_slices, roi_masks, True
+        
+    except Exception as e:
+        print(f"Error in traditional ROI extraction: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, None, None, False
+
 def create_temp_jpeg_folder(processed_slices, temp_dir_base="temp_sam2_frames"):
     """
     Create a temporary directory with JPEG files for SAM2 video processing
@@ -354,54 +427,25 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         print(f"Mask data type: {mask_data.dtype}")
         print(f"Mask non-zero count: {np.count_nonzero(mask_data) if mask_data.size > 0 else 0}")
         
-        # Use safer ROI extraction with enhanced fallback
-        roi_bounds, roi_slices, roi_masks, success = safe_roi_extraction(nii_data, mask_data)
+        # Correct dimensions: NIfTI format is (slices, height, width) - first dimension is slices
+        num_slices = nii_data.shape[0]  # Number of slices is the first dimension
+        height = nii_data.shape[1]      # Height is second dimension  
+        width = nii_data.shape[2]       # Width is third dimension
+        
+        print(f"Corrected interpretation: {num_slices} slices of {height}x{width} pixels")
+        
+        # Extract representative slice for ROI calculation (middle slice like traditional mode)
+        middle_slice_idx = num_slices // 2
+        middle_image_slice = nii_data[middle_slice_idx, :, :]  # Shape: (height, width)
+        middle_mask_slice = mask_data[middle_slice_idx, :, :] if mask_data.shape[0] > middle_slice_idx else mask_data[0, :, :]
+        
+        # Use traditional ROI extraction approach (but adapted for SAM2)
+        roi_bounds, roi_slices, roi_masks, success = extract_roi_traditional_approach(
+            nii_data, mask_data, middle_image_slice, middle_mask_slice, num_slices
+        )
         if not success:
-            print(f"⚠️ Primary ROI extraction failed, attempting fallback...")
-            
-            # Fallback: use center region if ROI extraction fails
-            h, w, d = nii_data.shape
-            center_h, center_w = h // 2, w // 2
-            roi_size = min(256, h // 2, w // 2)  # Reasonable ROI size
-            
-            y_min = max(0, center_h - roi_size // 2)
-            y_max = min(h, center_h + roi_size // 2)
-            x_min = max(0, center_w - roi_size // 2)
-            x_max = min(w, center_w + roi_size // 2)
-            
-            print(f"Using fallback ROI: y({y_min},{y_max}) x({x_min},{x_max})")
-            
-            roi_bounds = (x_min, y_min, x_max, y_max)
-            roi_slices = []
-            roi_masks = []
-            
-            # Extract fallback ROI
-            for slice_idx in range(d):
-                img_slice = nii_data[:, :, slice_idx]
-                roi_slice = img_slice[y_min:y_max, x_min:x_max]
-                
-                # Create simple mask based on intensity if original mask fails
-                if mask_data.size > 0:
-                    try:
-                        mask_slice_idx = min(slice_idx, mask_data.shape[0] - 1) if len(mask_data.shape) > 2 else 0
-                        if len(mask_data.shape) == 3:
-                            mask_slice = mask_data[y_min:y_max, x_min:x_max, mask_slice_idx]
-                        else:
-                            mask_slice = mask_data[y_min:y_max, x_min:x_max]
-                    except:
-                        # Create intensity-based mask as last resort
-                        threshold = np.percentile(roi_slice[roi_slice > 0], 75) if np.any(roi_slice > 0) else roi_slice.mean()
-                        mask_slice = (roi_slice > threshold).astype(np.uint8)
-                else:
-                    # Create intensity-based mask
-                    threshold = np.percentile(roi_slice[roi_slice > 0], 75) if np.any(roi_slice > 0) else roi_slice.mean()
-                    mask_slice = (roi_slice > threshold).astype(np.uint8)
-                
-                roi_slices.append(roi_slice)
-                roi_masks.append(mask_slice)
-            
-            print(f"Fallback extraction completed with {len(roi_slices)} slices")
-            success = True
+            print(f"❌ Traditional ROI extraction failed")
+            return False, "Failed to extract valid region of interest using traditional approach", None
         
         print(f"ROI bounds: {roi_bounds}")
         print(f"Number of ROI slices: {len(roi_slices)}")
@@ -510,13 +554,14 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
             print(f"Mask propagation completed: {prop_message}")
             print(f"Processed frames: {sorted(video_segments.keys())}")
             
-            # Convert results back to full image space
+            # Convert results back to full image space (traditional approach)
             output_masks = []
             x_min, y_min, x_max, y_max = roi_bounds
             
-            for slice_idx in range(nii_data.shape[2]):
-                # Create full-size mask
-                full_mask = np.zeros((nii_data.shape[0], nii_data.shape[1]), dtype=np.uint8)
+            # Process each slice like traditional mode
+            for slice_idx in range(nii_data.shape[0]):  # First dimension is number of slices
+                # Create full-size mask for this slice
+                full_mask = np.zeros((nii_data.shape[1], nii_data.shape[2]), dtype=np.uint8)  # (height, width)
                 
                 # Check if we have a propagated mask for this slice
                 if slice_idx in video_segments and 1 in video_segments[slice_idx]:
@@ -545,12 +590,12 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
             "propagation_frames": len(video_segments)
         }
         
-        # Save output
+        # Save output (following traditional format)
         output_filename = os.path.basename(nifti_path).replace('.nii', '_sam2_result.nii')
         output_path = os.path.join(output_dir, output_filename)
         
-        # Create 3D output
-        output_3d = np.stack(output_masks, axis=2)
+        # Create 3D output - stack along first dimension like original
+        output_3d = np.stack(output_masks, axis=0)  # Shape: (slices, height, width)
         output_nii = nib.Nifti1Image(output_3d, nii_img.affine, nii_img.header)
         nib.save(output_nii, output_path)
         
