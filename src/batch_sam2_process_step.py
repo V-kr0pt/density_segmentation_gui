@@ -203,11 +203,71 @@ def create_temp_jpeg_folder(processed_slices, temp_dir_base="temp_sam2_frames"):
         print(f"Created temporary JPEG folder: {temp_dir}")
         print(f"Generated {len(frame_names)} frame files")
         
+        # Show sample frames for visualization
+        if len(processed_slices) > 0:
+            print(f"Sample frame info:")
+            print(f"  First frame shape: {processed_slices[0].shape}")
+            print(f"  First frame data type: {processed_slices[0].dtype}")
+            print(f"  First frame value range: [{np.min(processed_slices[0]):.2f}, {np.max(processed_slices[0]):.2f}]")
+        
         return temp_dir, frame_names, True
         
     except Exception as e:
         print(f"Error creating temporary JPEG folder: {e}")
         return None, None, False
+
+def create_sam2_progress_visualization(roi_slices, roi_masks, roi_bounds, middle_slice_idx=None):
+    """Create visualization to show SAM2 processing progress"""
+    try:
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import Rectangle
+        
+        if not roi_slices or len(roi_slices) == 0:
+            return None
+        
+        # Use middle slice if not specified
+        if middle_slice_idx is None:
+            middle_slice_idx = len(roi_slices) // 2
+        
+        if middle_slice_idx >= len(roi_slices):
+            middle_slice_idx = 0
+        
+        # Create figure
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        
+        # Show original ROI slice
+        roi_slice = roi_slices[middle_slice_idx]
+        roi_mask = roi_masks[middle_slice_idx]
+        
+        # Normalize for display
+        roi_slice_norm = (roi_slice - np.min(roi_slice)) / (np.max(roi_slice) - np.min(roi_slice) + 1e-8)
+        
+        # Plot 1: Original ROI
+        axes[0].imshow(roi_slice_norm, cmap='gray')
+        axes[0].set_title(f'Original ROI (Slice {middle_slice_idx})')
+        axes[0].axis('off')
+        
+        # Plot 2: Mask overlay
+        axes[1].imshow(roi_slice_norm, cmap='gray')
+        mask_overlay = np.ma.masked_where(roi_mask == 0, roi_mask)
+        axes[1].imshow(mask_overlay, cmap='jet', alpha=0.6)
+        axes[1].set_title('ROI with Mask Overlay')
+        axes[1].axis('off')
+        
+        # Plot 3: ROI bounds visualization
+        x_min, y_min, x_max, y_max = roi_bounds
+        axes[2].imshow(roi_slice_norm, cmap='gray')
+        rect = Rectangle((0, 0), x_max-x_min, y_max-y_min, linewidth=2, edgecolor='red', facecolor='none')
+        axes[2].add_patch(rect)
+        axes[2].set_title(f'ROI Bounds: {x_max-x_min}x{y_max-y_min}')
+        axes[2].axis('off')
+        
+        plt.tight_layout()
+        return fig
+        
+    except Exception as e:
+        print(f"Error creating visualization: {e}")
+        return None
 
 def cleanup_temp_folder(temp_dir):
     """Clean up temporary directory"""
@@ -394,32 +454,69 @@ def safe_normalize_image(img):
     img_norm = (img - img_min) / (img_max - img_min + 1e-8)
     return (img_norm * 255).astype(np.uint8)
 
-def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, output_dir):
+def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, output_dir, 
+                                        status_placeholder=None, visualization_placeholder=None, progress_placeholder=None):
     """
-    Process NIfTI file using SAM2 video propagation
+    Process NIfTI file using SAM2 video propagation with real-time visualization
     
     Args:
         nifti_path: Path to the NIfTI file
         mask_data: Mask data from draw step (3D numpy array)
         threshold_data: Threshold parameters
         output_dir: Output directory for results
+        status_placeholder: Streamlit placeholder for status updates
+        visualization_placeholder: Streamlit placeholder for visualizations
+        progress_placeholder: Streamlit placeholder for progress bars
     
     Returns:
         success: Boolean indicating success
         message: Status message
         results: Dictionary with processing results
     """
+    
+    def update_status(message, level="info"):
+        """Helper function to update status"""
+        if status_placeholder:
+            if level == "info":
+                status_placeholder.info(f"📋 {message}")
+            elif level == "success":
+                status_placeholder.success(f"✅ {message}")
+            elif level == "warning":
+                status_placeholder.warning(f"⚠️ {message}")
+            elif level == "error":
+                status_placeholder.error(f"❌ {message}")
+        print(message)
+    
+    def update_progress(step, total_steps, current_step_name):
+        """Helper function to update progress"""
+        if progress_placeholder:
+            progress = step / total_steps
+            progress_placeholder.progress(progress, text=f"Step {step}/{total_steps}: {current_step_name}")
+    
     try:
+        total_steps = 8  # Total processing steps
+        current_step = 0
+        
+        current_step += 1
+        update_status(f"Loading NIfTI file: {os.path.basename(nifti_path)}")
+        update_progress(current_step, total_steps, "Loading NIfTI file")
+        
         # Load NIfTI file
         nii_img = nib.load(nifti_path)
         nii_data = nii_img.get_fdata()
         
         if len(nii_data.shape) != 3:
+            update_status("NIfTI file must be 3D", "error")
             return False, "NIfTI file must be 3D", None
         
         # Validate mask data
         if mask_data is None or mask_data.size == 0:
+            update_status("Mask data is empty or None", "error")
             return False, "Mask data is empty or None", None
+        
+        current_step += 1
+        update_status("Analyzing image and mask dimensions")
+        update_progress(current_step, total_steps, "Analyzing dimensions")
         
         # Debug info
         print(f"NIfTI shape: {nii_data.shape}")
@@ -434,6 +531,10 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         
         print(f"Corrected interpretation: {num_slices} slices of {height}x{width} pixels")
         
+        current_step += 1
+        update_status(f"Extracting ROI from {num_slices} slices using traditional approach")
+        update_progress(current_step, total_steps, "Extracting ROI")
+        
         # Extract representative slice for ROI calculation (middle slice like traditional mode)
         middle_slice_idx = num_slices // 2
         middle_image_slice = nii_data[middle_slice_idx, :, :]  # Shape: (height, width)
@@ -444,8 +545,21 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
             nii_data, mask_data, middle_image_slice, middle_mask_slice, num_slices
         )
         if not success:
-            print(f"❌ Traditional ROI extraction failed")
+            update_status("Traditional ROI extraction failed", "error")
             return False, "Failed to extract valid region of interest using traditional approach", None
+        
+        current_step += 1
+        update_status(f"ROI extracted successfully: {len(roi_slices)} slices")
+        update_progress(current_step, total_steps, "Processing slices for SAM2")
+        
+        # Show ROI visualization
+        if visualization_placeholder:
+            try:
+                roi_viz = create_sam2_progress_visualization(roi_slices, roi_masks, roi_bounds, middle_slice_idx)
+                if roi_viz:
+                    visualization_placeholder.pyplot(roi_viz)
+            except Exception as viz_error:
+                print(f"Visualization error: {viz_error}")
         
         print(f"ROI bounds: {roi_bounds}")
         print(f"Number of ROI slices: {len(roi_slices)}")
@@ -467,13 +581,24 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
                 processed_slices.append(safe_normalize_for_sam2(roi_slice))
         
         # Convert to format suitable for SAM2 video predictor using JPEG folder approach
+        current_step += 1
+        update_status("Creating temporary JPEG folder for SAM2...")
+        update_progress(current_step, total_steps, "Creating JPEG files")
+        
         print("Creating temporary JPEG folder for SAM2...")
         temp_video_dir, frame_names, jpeg_success = create_temp_jpeg_folder(processed_slices)
         
         if not jpeg_success:
+            update_status("Failed to create temporary JPEG folder", "error")
             return False, "Failed to create temporary JPEG folder for SAM2", None
         
+        update_status(f"Created {len(frame_names)} JPEG frames successfully")
+        
         try:
+            current_step += 1
+            update_status("Loading SAM2 video model...")
+            update_progress(current_step, total_steps, "Loading SAM2 model")
+            
             # Initialize SAM2 video manager with enhanced error handling
             sam2_video = SAM2VideoManager()
             
@@ -494,16 +619,24 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
                         print("No suitable config files found in SAM2 installation")
                 
                 cleanup_temp_folder(temp_video_dir)
+                update_status(f"Failed to load SAM2 video model: {message}", "error")
                 return False, f"Failed to load SAM2 video model: {message}", None
             
+            update_status("SAM2 video model loaded successfully", "success")
             print(f"SAM2 video model loaded successfully: {message}")
+            
+            current_step += 1
+            update_status("Initializing SAM2 inference state...")
+            update_progress(current_step, total_steps, "Initializing inference")
             
             # Initialize inference state with JPEG folder path
             success, message = sam2_video.init_inference_state(temp_video_dir)
             if not success:
                 cleanup_temp_folder(temp_video_dir)
+                update_status(f"Failed to initialize inference state: {message}", "error")
                 return False, f"Failed to initialize inference state: {message}", None
             
+            update_status("Inference state initialized successfully", "success")
             print("Inference state initialized successfully")
             
             # Reset state for clean start
@@ -545,16 +678,26 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
             print(f"Bounding box added successfully: {box_message}")
             
             # Propagate masks through all frames
+            current_step += 1
+            update_status("Starting SAM2 mask propagation...")
+            update_progress(current_step, total_steps, "Propagating masks")
+            
             print("Starting mask propagation...")
             video_segments, prop_message = sam2_video.propagate_masks()
             if video_segments is None:
                 cleanup_temp_folder(temp_video_dir)
+                update_status(f"Failed to propagate masks: {prop_message}", "error")
                 return False, f"Failed to propagate masks: {prop_message}", None
             
+            update_status(f"Mask propagation completed successfully", "success")
             print(f"Mask propagation completed: {prop_message}")
             print(f"Processed frames: {sorted(video_segments.keys())}")
             
             # Convert results back to full image space (traditional approach)
+            current_step += 1
+            update_status("Converting results back to full image space...")
+            update_progress(current_step, total_steps, "Converting results")
+            
             output_masks = []
             x_min, y_min, x_max, y_max = roi_bounds
             
@@ -567,15 +710,36 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
                 if slice_idx in video_segments and 1 in video_segments[slice_idx]:
                     prop_mask = video_segments[slice_idx][1]  # Object ID 1
                     
+                    # Debug: Check propagated mask dimensions
+                    print(f"Slice {slice_idx}: propagated mask shape: {prop_mask.shape}")
+                    
                     # Ensure propagated mask is the right size for ROI
                     roi_h = y_max - y_min
                     roi_w = x_max - x_min
                     
+                    print(f"ROI dimensions: {roi_w}x{roi_h}, mask dimensions: {prop_mask.shape}")
+                    
+                    # Validate dimensions before resize
+                    if roi_h <= 0 or roi_w <= 0:
+                        print(f"Invalid ROI dimensions for slice {slice_idx}: {roi_w}x{roi_h}")
+                        continue
+                    
+                    if prop_mask.shape[0] <= 0 or prop_mask.shape[1] <= 0:
+                        print(f"Invalid mask dimensions for slice {slice_idx}: {prop_mask.shape}")
+                        continue
+                    
+                    # Only resize if dimensions don't match
                     if prop_mask.shape[0] != roi_h or prop_mask.shape[1] != roi_w:
-                        prop_mask = cv2.resize(prop_mask.astype(np.uint8), (roi_w, roi_h), interpolation=cv2.INTER_NEAREST)
+                        try:
+                            prop_mask = cv2.resize(prop_mask.astype(np.uint8), (roi_w, roi_h), interpolation=cv2.INTER_NEAREST)
+                            print(f"Resized mask from {prop_mask.shape} to {roi_h}x{roi_w}")
+                        except Exception as resize_error:
+                            print(f"Resize failed for slice {slice_idx}: {resize_error}")
+                            continue
                     
                     # Map back to full image
                     full_mask[y_min:y_max, x_min:x_max] = (prop_mask > 0.5).astype(np.uint8)
+                    print(f"Mapped mask to full image for slice {slice_idx}")
                 
                 output_masks.append(full_mask)
             
@@ -598,6 +762,9 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         output_3d = np.stack(output_masks, axis=0)  # Shape: (slices, height, width)
         output_nii = nib.Nifti1Image(output_3d, nii_img.affine, nii_img.header)
         nib.save(output_nii, output_path)
+        
+        update_status(f"SAM2 processing completed successfully!", "success")
+        update_progress(total_steps, total_steps, "Complete")
         
         print(f"✅ SAM2 processing completed successfully")
         print(f"Output saved to: {output_path}")
@@ -855,11 +1022,19 @@ def batch_sam2_process_step():
                     mask_nii = nib.load(mask_path)
                     mask_data = mask_nii.get_fdata()
                     
-                    # Debug mask data
-                    st.write(f"Debug - Loaded mask shape: {mask_data.shape}")
-                    st.write(f"Debug - Mask data type: {mask_data.dtype}")
-                    st.write(f"Debug - Mask min/max: {np.min(mask_data)}/{np.max(mask_data)}")
-                    st.write(f"Debug - Non-zero elements: {np.count_nonzero(mask_data)}")
+                    # Debug mask data with visualizations
+                    st.write(f"**📊 Mask Analysis for {filename}:**")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Shape", f"{mask_data.shape}")
+                    with col2:
+                        st.metric("Data Type", f"{mask_data.dtype}")
+                    with col3:
+                        st.metric("Non-zero pixels", f"{np.count_nonzero(mask_data):,}")
+                    
+                    # Show mask value range
+                    mask_min, mask_max = np.min(mask_data), np.max(mask_data)
+                    st.write(f"Value range: [{mask_min:.3f}, {mask_max:.3f}]")
                     
                     # Validate mask data
                     if mask_data.size == 0:
@@ -895,9 +1070,25 @@ def batch_sam2_process_step():
                             else:
                                 threshold_dict = threshold_data
                             
-                            # Process with SAM2
+                            # Create progress container for detailed visualization
+                            progress_container = st.container()
+                            
+                            with progress_container:
+                                st.write("### 🔍 SAM2 Processing Details")
+                                
+                                # Create placeholder for dynamic updates
+                                status_placeholder = st.empty()
+                                visualization_placeholder = st.empty()
+                                progress_placeholder = st.empty()
+                                
+                                # Update status
+                                with status_placeholder.container():
+                                    st.info(f"🚀 Starting SAM2 processing for {filename}")
+                            
+                            # Process with SAM2 and pass visualization containers
                             success, message, results = process_nifti_with_sam2_propagation(
-                                file_path, mask_data, threshold_dict, output_dir
+                                file_path, mask_data, threshold_dict, output_dir,
+                                status_placeholder, visualization_placeholder, progress_placeholder
                             )
                             
                             st.session_state["sam2_completed_files"][filename] = {
