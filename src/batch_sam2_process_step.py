@@ -112,7 +112,7 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
     
     Args:
         nifti_path: Path to the NIfTI file
-        mask_data: Mask data from draw step
+        mask_data: Mask data from draw step (3D numpy array)
         threshold_data: Threshold parameters
         output_dir: Output directory for results
     
@@ -129,33 +129,60 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         if len(nii_data.shape) != 3:
             return False, "NIfTI file must be 3D", None
         
-        # Get drawn region bounds
-        mask_bounds = MaskOperations.get_mask_bounds(mask_data)
-        if mask_bounds is None:
-            return False, "Invalid mask data", None
+        # Get mask bounds from the central slice (where drawing was done)
+        central_slice_idx = mask_data.shape[0] // 2
+        central_mask = mask_data[central_slice_idx]
         
-        x_min, y_min, x_max, y_max = mask_bounds
+        # Find bounding box of the mask
+        mask_coords = np.where(central_mask > 0)
+        if len(mask_coords[0]) == 0:
+            return False, "No mask region found", None
+        
+        y_min, y_max = np.min(mask_coords[0]), np.max(mask_coords[0])
+        x_min, x_max = np.min(mask_coords[1]), np.max(mask_coords[1])
+        
+        # Add some padding to the bounding box
+        padding = 10
+        y_min = max(0, y_min - padding)
+        y_max = min(nii_data.shape[0], y_max + padding)
+        x_min = max(0, x_min - padding)
+        x_max = min(nii_data.shape[1], x_max + padding)
+        
+        mask_bounds = (x_min, y_min, x_max, y_max)
         
         # Extract region of interest for all slices
         roi_slices = []
         original_slices = []
+        roi_masks = []
         
         for slice_idx in range(nii_data.shape[2]):
-            # Get the slice
+            # Get the slice and corresponding mask
             slice_data = nii_data[:, :, slice_idx]
+            mask_slice = mask_data[min(slice_idx, mask_data.shape[0] - 1)]  # Handle different sizes
             
             # Extract ROI
             roi_slice = slice_data[y_min:y_max, x_min:x_max]
+            roi_mask = mask_slice[y_min:y_max, x_min:x_max]
+            
             original_slices.append(roi_slice.copy())
+            roi_masks.append(roi_mask)
             
             # Apply threshold only to the first slice
             if slice_idx == 0:
                 # Apply threshold to first slice
-                thresholded_slice = ThresholdOperations.apply_threshold(
-                    roi_slice,
-                    threshold_data['lower_threshold'],
-                    threshold_data['upper_threshold']
-                )
+                # Normalize the image first
+                roi_normalized = ImageOperations.normalize_image(roi_slice)
+                
+                # Create threshold mask
+                threshold_value = threshold_data.get('upper_threshold', 0.5)
+                if isinstance(threshold_value, (int, float)):
+                    # Convert threshold (0-1) to 0-255 range
+                    threshold_255 = threshold_value * 255
+                    thresholded_mask = (roi_normalized > threshold_255) & (roi_mask > 0)
+                    thresholded_slice = roi_normalized * thresholded_mask.astype(np.uint8)
+                else:
+                    thresholded_slice = roi_normalized
+                
                 roi_slices.append(thresholded_slice)
             else:
                 # Keep original for other slices
@@ -165,7 +192,7 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         video_frames = []
         for slice_data in roi_slices:
             # Normalize to 0-255 range
-            slice_normalized = ImageOperations.normalize_to_uint8(slice_data)
+            slice_normalized = ImageOperations.normalize_image(slice_data)
             
             # Convert to 3-channel RGB
             if len(slice_normalized.shape) == 2:
@@ -190,12 +217,18 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         
         # Create initial mask from thresholded first frame
         first_frame_thresholded = roi_slices[0]
+        first_frame_mask = roi_masks[0]
         
-        # Generate mask from thresholded region
-        # Simple approach: create mask where threshold was applied
-        initial_mask = (first_frame_thresholded > 0).astype(np.uint8)
+        # Generate mask from thresholded region combined with original mask
+        if isinstance(first_frame_thresholded, np.ndarray) and first_frame_thresholded.dtype != np.uint8:
+            first_frame_norm = ImageOperations.normalize_image(first_frame_thresholded)
+        else:
+            first_frame_norm = first_frame_thresholded
         
-        # Optionally, you can use SAM2 image predictor for better initial mask
+        # Combine threshold result with original mask region
+        initial_mask = ((first_frame_norm > 0) & (first_frame_mask > 0)).astype(np.uint8)
+        
+        # Optionally, use SAM2 image predictor for better initial mask
         sam2_image = SAM2Manager()
         img_success, img_message = sam2_image.load_model()
         
@@ -288,7 +321,7 @@ def create_sam2_visualization(original_slices, video_segments, mask_bounds, outp
             col = i % cols
             
             # Normalize slice
-            slice_norm = ImageOperations.normalize_to_uint8(slice_data)
+            slice_norm = ImageOperations.normalize_image(slice_data)
             
             # Resize slice to fit the grid
             slice_resized = cv2.resize(slice_norm, (slice_size, slice_size))
@@ -473,44 +506,75 @@ def batch_sam2_process_step():
         current_idx = st.session_state["sam2_current_file_idx"]
         
         if current_idx < total_files:
-            file_info = files[current_idx]
-            file_path = file_info["path"]
-            filename = os.path.basename(file_path)
+            # Get file info - batch_files contains strings (filenames)
+            filename = files[current_idx]
+            filename_no_ext = filename.split('.')[0]
+            
+            # Build file path
+            input_folder = os.path.join(os.getcwd(), 'media')
+            file_path = os.path.join(input_folder, filename)
             
             st.markdown(f'<div class="file-status status-processing">🤖 Processing: {filename}</div>', unsafe_allow_html=True)
             
-            # Get mask and threshold data for this file
-            mask_data = file_info.get("mask_data")
-            threshold_data = thresholds.get(filename, {})
+            # Get mask data from saved files (created in draw step)
+            output_path = os.path.join(os.getcwd(), 'output', filename_no_ext)
+            mask_path = os.path.join(output_path, 'dense.nii')
             
-            if mask_data is None:
-                st.error(f"No mask data found for {filename}")
+            if not os.path.exists(mask_path):
+                st.error(f"Mask file not found: {mask_path}")
                 st.session_state["sam2_completed_files"][filename] = {
                     "status": "error",
-                    "message": "No mask data found"
-                }
-            elif not threshold_data:
-                st.error(f"No threshold data found for {filename}")
-                st.session_state["sam2_completed_files"][filename] = {
-                    "status": "error", 
-                    "message": "No threshold data found"
+                    "message": "Mask file not found - draw step may not be completed"
                 }
             else:
-                # Process with SAM2
-                success, message, results = process_nifti_with_sam2_propagation(
-                    file_path, mask_data, threshold_data, output_dir
-                )
-                
-                st.session_state["sam2_completed_files"][filename] = {
-                    "status": "success" if success else "error",
-                    "message": message,
-                    "results": results
-                }
-                
-                if success:
-                    st.success(f"✅ {filename}: {message}")
-                else:
-                    st.error(f"❌ {filename}: {message}")
+                # Load mask data from file
+                try:
+                    import nibabel as nib
+                    mask_nii = nib.load(mask_path)
+                    mask_data = mask_nii.get_fdata()
+                    
+                    # Get threshold data from session state
+                    threshold_data = thresholds.get(filename_no_ext, {})
+                    
+                    if not threshold_data:
+                        st.error(f"No threshold data found for {filename}")
+                        st.session_state["sam2_completed_files"][filename] = {
+                            "status": "error", 
+                            "message": "No threshold data found"
+                        }
+                    else:
+                        # Convert threshold data to proper format if needed
+                        if isinstance(threshold_data, (int, float)):
+                            # If threshold_data is just a number, convert to dict format
+                            threshold_dict = {
+                                'lower_threshold': 0.0,
+                                'upper_threshold': float(threshold_data)
+                            }
+                        else:
+                            threshold_dict = threshold_data
+                        
+                        # Process with SAM2
+                        success, message, results = process_nifti_with_sam2_propagation(
+                            file_path, mask_data, threshold_dict, output_dir
+                        )
+                        
+                        st.session_state["sam2_completed_files"][filename] = {
+                            "status": "success" if success else "error",
+                            "message": message,
+                            "results": results
+                        }
+                        
+                        if success:
+                            st.success(f"✅ {filename}: {message}")
+                        else:
+                            st.error(f"❌ {filename}: {message}")
+                            
+                except Exception as e:
+                    st.error(f"Error loading mask data: {str(e)}")
+                    st.session_state["sam2_completed_files"][filename] = {
+                        "status": "error",
+                        "message": f"Error loading mask data: {str(e)}"
+                    }
             
             # Move to next file
             st.session_state["sam2_current_file_idx"] += 1
