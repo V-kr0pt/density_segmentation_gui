@@ -23,6 +23,87 @@ try:
 except ImportError:
     SAM2_VIDEO_AVAILABLE = False
 
+def test_sam2_installation():
+    """Test SAM2 installation and display diagnostic info"""
+    print("=== SAM2 Installation Diagnostic ===")
+    
+    # Check SAM2 import
+    try:
+        import sam2
+        print(f"✅ SAM2 imported successfully")
+        print(f"   SAM2 path: {sam2.__file__}")
+        
+        # Check version if available
+        if hasattr(sam2, '__version__'):
+            print(f"   SAM2 version: {sam2.__version__}")
+    except ImportError as e:
+        print(f"❌ SAM2 import failed: {e}")
+        return False
+    
+    # Check required imports
+    try:
+        from sam2.build_sam import build_sam2_video_predictor
+        print(f"✅ build_sam2_video_predictor imported")
+    except ImportError as e:
+        print(f"❌ build_sam2_video_predictor import failed: {e}")
+        return False
+    
+    # Check configs
+    configs = find_sam2_configs()
+    if configs:
+        print(f"✅ Found {len(configs)} config files:")
+        for name, rel_path, full_path in configs[:5]:  # Show first 5
+            print(f"   {name}")
+    else:
+        print(f"❌ No config files found")
+        return False
+    
+    # Check checkpoint
+    checkpoint_path = "checkpoints/sam2.1_hiera_large.pt"
+    if os.path.exists(checkpoint_path):
+        file_size = os.path.getsize(checkpoint_path) / (1024**3)  # GB
+        print(f"✅ Checkpoint found: {checkpoint_path} ({file_size:.2f} GB)")
+    else:
+        print(f"❌ Checkpoint missing: {checkpoint_path}")
+        return False
+    
+    # Check PyTorch and CUDA
+    print(f"✅ PyTorch version: {torch.__version__}")
+    print(f"✅ CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"   CUDA version: {torch.version.cuda}")
+        print(f"   GPU count: {torch.cuda.device_count()}")
+    
+    return True
+
+def find_sam2_configs():
+    """Find available SAM2 config files"""
+    configs = []
+    try:
+        import sam2
+        sam2_path = os.path.dirname(sam2.__file__)
+        
+        # Common config locations
+        config_locations = [
+            os.path.join(sam2_path, "configs"),
+            os.path.join(sam2_path, "configs", "sam2"),
+            sam2_path
+        ]
+        
+        for location in config_locations:
+            if os.path.exists(location):
+                for root, dirs, files in os.walk(location):
+                    for file in files:
+                        if file.endswith('.yaml') and 'hiera' in file.lower():
+                            full_path = os.path.join(root, file)
+                            rel_path = os.path.relpath(full_path, sam2_path)
+                            configs.append((file, rel_path, full_path))
+        
+        return configs
+    except Exception as e:
+        print(f"Error finding configs: {e}")
+        return []
+
 class SAM2VideoManager:
     """Manager class for SAM2 video operations with propagation"""
     
@@ -41,21 +122,32 @@ class SAM2VideoManager:
             return False, "SAM2 video predictor not available. Install SAM2 properly."
         
         try:
-            # Try different config approaches for SAM2 video
-            config_options = [
-                "sam2.1_hiera_l.yaml",
-                "configs/sam2.1_hiera_l.yaml",
-                "sam2.1/sam2.1_hiera_l.yaml",
-                "sam2_hiera_l.yaml",
-                "sam2.1_hiera_large.yaml",
-            ]
-            
+            # Checkpoint path
             checkpoint_path = "checkpoints/sam2.1_hiera_large.pt"
+            
+            if not os.path.exists(checkpoint_path):
+                return False, f"Checkpoint not found: {checkpoint_path}"
+            
+            # Find available configs
+            available_configs = find_sam2_configs()
+            print(f"Found {len(available_configs)} SAM2 config files:")
+            for name, rel_path, full_path in available_configs:
+                print(f"  {name} -> {rel_path}")
+            
             video_predictor = None
             config_used = None
             last_error = None
             
-            for config_name in config_options:
+            # Try configs in order of preference
+            preferred_configs = [
+                "sam2_hiera_l.yaml",
+                "sam2_hiera_large.yaml", 
+                "sam2.1_hiera_l.yaml",
+                "sam2.1_hiera_large.yaml"
+            ]
+            
+            # First try with standard config names
+            for config_name in preferred_configs:
                 try:
                     video_predictor = build_sam2_video_predictor(config_name, checkpoint_path, device=self.device)
                     config_used = config_name
@@ -64,8 +156,32 @@ class SAM2VideoManager:
                     last_error = str(config_error)
                     continue
             
+            # If standard names fail, try found config files
+            if video_predictor is None and available_configs:
+                for name, rel_path, full_path in available_configs:
+                    try:
+                        # Try both relative path and full path
+                        for config_path in [rel_path, full_path, name]:
+                            try:
+                                video_predictor = build_sam2_video_predictor(config_path, checkpoint_path, device=self.device)
+                                config_used = f"{name} ({config_path})"
+                                break
+                            except:
+                                continue
+                        if video_predictor is not None:
+                            break
+                    except Exception as config_error:
+                        last_error = str(config_error)
+                        continue
+            
             if video_predictor is None:
-                return False, f"Failed to load video predictor with all configs. Last error: {last_error}"
+                error_msg = f"Failed to load video predictor with all configs.\n"
+                error_msg += f"Last error: {last_error}\n\n"
+                error_msg += f"Troubleshooting:\n"
+                error_msg += f"1. Check SAM2 installation: pip list | grep sam2\n"
+                error_msg += f"2. Check checkpoint exists: {checkpoint_path}\n"
+                error_msg += f"3. Try reinstalling: pip install git+https://github.com/facebookresearch/segment-anything-2.git"
+                return False, error_msg
             
             self.video_predictor = video_predictor
             self.model_loaded = True
@@ -251,13 +367,28 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
             if frame.size == 0:
                 return False, f"Empty frame at index {i}", None
         
-        # Initialize SAM2 video manager
+        # Initialize SAM2 video manager with enhanced error handling
         sam2_video = SAM2VideoManager()
         
-        # Load video model
+        # Load video model with improved config handling
+        print("Loading SAM2 video model...")
         success, message = sam2_video.load_video_model()
         if not success:
+            print(f"SAM2 video model loading failed: {message}")
+            # Try to provide more specific error information
+            if "config" in message.lower():
+                print("Config-related error detected. Checking available configs...")
+                configs = find_sam2_configs()
+                if configs:
+                    print(f"Found {len(configs)} potential configs:")
+                    for name, rel_path, full_path in configs[:3]:
+                        print(f"  - {name} at {rel_path}")
+                else:
+                    print("No suitable config files found in SAM2 installation")
+            
             return False, f"Failed to load SAM2 video model: {message}", None
+        
+        print(f"SAM2 video model loaded successfully: {message}")
         
         # Initialize inference state
         success, message = sam2_video.init_inference_state(video_frames)
@@ -504,10 +635,26 @@ def batch_sam2_process_step():
     output_dir = "output"
     os.makedirs(output_dir, exist_ok=True)
     
-    # Check SAM2 availability
+    # Check SAM2 availability and run diagnostics
+    st.markdown('<div class="progress-section">', unsafe_allow_html=True)
+    st.markdown("### 🔧 SAM2 System Check")
+    
+    with st.expander("View SAM2 Diagnostic Info", expanded=False):
+        if st.button("Run SAM2 Diagnostic"):
+            with st.spinner("Running SAM2 diagnostic..."):
+                diagnostic_success = test_sam2_installation()
+                if diagnostic_success:
+                    st.success("✅ SAM2 installation check passed!")
+                else:
+                    st.error("❌ SAM2 installation issues detected. Check console output.")
+    
     sam2_manager = SAM2Manager()
     deps_ok, deps_msg = sam2_manager.check_dependencies()
     checkpoint_ok, checkpoint_msg = sam2_manager.check_checkpoint()
+    
+    st.markdown(f"**Dependencies:** {'✅' if deps_ok else '❌'} {deps_msg}")
+    st.markdown(f"**Checkpoint:** {'✅' if checkpoint_ok else '❌'} {checkpoint_msg}")
+    st.markdown('</div>', unsafe_allow_html=True)
     
     if not deps_ok or not checkpoint_ok:
         st.error("SAM2 Setup Required")
