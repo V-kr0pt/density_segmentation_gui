@@ -570,51 +570,48 @@ def batch_sam2_process_step():
                             "status": "error",
                             "message": "Loaded mask is empty"
                         }
-                        continue
-                    
-                    if np.count_nonzero(mask_data) == 0:
+                    elif np.count_nonzero(mask_data) == 0:
                         st.error(f"Loaded mask contains no non-zero values for {filename}")
                         st.session_state["sam2_completed_files"][filename] = {
                             "status": "error",
                             "message": "Mask contains no non-zero values"
                         }
-                        continue
-                    
-                    # Get threshold data from session state
-                    threshold_data = thresholds.get(filename_no_ext, {})
-                    
-                    if not threshold_data:
-                        st.error(f"No threshold data found for {filename}")
-                        st.session_state["sam2_completed_files"][filename] = {
-                            "status": "error", 
-                            "message": "No threshold data found"
-                        }
                     else:
-                        # Convert threshold data to proper format if needed
-                        if isinstance(threshold_data, (int, float)):
-                            # If threshold_data is just a number, convert to dict format
-                            threshold_dict = {
-                                'lower_threshold': 0.0,
-                                'upper_threshold': float(threshold_data)
+                        # Get threshold data from session state
+                        threshold_data = thresholds.get(filename_no_ext, {})
+                        
+                        if not threshold_data:
+                            st.error(f"No threshold data found for {filename}")
+                            st.session_state["sam2_completed_files"][filename] = {
+                                "status": "error", 
+                                "message": "No threshold data found"
                             }
                         else:
-                            threshold_dict = threshold_data
-                        
-                        # Process with SAM2
-                        success, message, results = process_nifti_with_sam2_propagation(
-                            file_path, mask_data, threshold_dict, output_dir
-                        )
-                        
-                        st.session_state["sam2_completed_files"][filename] = {
-                            "status": "success" if success else "error",
-                            "message": message,
-                            "results": results
-                        }
-                        
-                        if success:
-                            st.success(f"✅ {filename}: {message}")
-                        else:
-                            st.error(f"❌ {filename}: {message}")
+                            # Convert threshold data to proper format if needed
+                            if isinstance(threshold_data, (int, float)):
+                                # If threshold_data is just a number, convert to dict format
+                                threshold_dict = {
+                                    'lower_threshold': 0.0,
+                                    'upper_threshold': float(threshold_data)
+                                }
+                            else:
+                                threshold_dict = threshold_data
+                            
+                            # Process with SAM2
+                            success, message, results = process_nifti_with_sam2_propagation(
+                                file_path, mask_data, threshold_dict, output_dir
+                            )
+                            
+                            st.session_state["sam2_completed_files"][filename] = {
+                                "status": "success" if success else "error",
+                                "message": message,
+                                "results": results
+                            }
+                            
+                            if success:
+                                st.success(f"✅ {filename}: {message}")
+                            else:
+                                st.error(f"❌ {filename}: {message}")
                             
                 except Exception as e:
                     st.error(f"Error loading mask data: {str(e)}")
