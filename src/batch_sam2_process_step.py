@@ -7,6 +7,7 @@ import shutil
 import cv2
 import torch
 from utils import ImageOperations, MaskOperations, ThresholdOperations
+from sam_utils import SAM2Manager
 from sam2_simple_approach import (
     create_simple_initial_mask, 
     safe_roi_extraction, 
@@ -229,7 +230,6 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
             return False, "Failed to create initial mask from thresholded data", None
         
         # Use SAM2 for automatic segmentation of the entire ROI (optional refinement)
-        from sam_utils import SAM2Manager
         sam2_image = SAM2Manager()
         img_success, img_message = sam2_image.load_model()
         
