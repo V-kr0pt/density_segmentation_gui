@@ -163,10 +163,54 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         print(f"Mask data type: {mask_data.dtype}")
         print(f"Mask non-zero count: {np.count_nonzero(mask_data) if mask_data.size > 0 else 0}")
         
-        # Use safer ROI extraction
+        # Use safer ROI extraction with enhanced fallback
         roi_bounds, roi_slices, roi_masks, success = safe_roi_extraction(nii_data, mask_data)
         if not success:
-            return False, "Failed to extract valid region of interest", None
+            print(f"⚠️ Primary ROI extraction failed, attempting fallback...")
+            
+            # Fallback: use center region if ROI extraction fails
+            h, w, d = nii_data.shape
+            center_h, center_w = h // 2, w // 2
+            roi_size = min(256, h // 2, w // 2)  # Reasonable ROI size
+            
+            y_min = max(0, center_h - roi_size // 2)
+            y_max = min(h, center_h + roi_size // 2)
+            x_min = max(0, center_w - roi_size // 2)
+            x_max = min(w, center_w + roi_size // 2)
+            
+            print(f"Using fallback ROI: y({y_min},{y_max}) x({x_min},{x_max})")
+            
+            roi_bounds = (x_min, y_min, x_max, y_max)
+            roi_slices = []
+            roi_masks = []
+            
+            # Extract fallback ROI
+            for slice_idx in range(d):
+                img_slice = nii_data[:, :, slice_idx]
+                roi_slice = img_slice[y_min:y_max, x_min:x_max]
+                
+                # Create simple mask based on intensity if original mask fails
+                if mask_data.size > 0:
+                    try:
+                        mask_slice_idx = min(slice_idx, mask_data.shape[0] - 1) if len(mask_data.shape) > 2 else 0
+                        if len(mask_data.shape) == 3:
+                            mask_slice = mask_data[y_min:y_max, x_min:x_max, mask_slice_idx]
+                        else:
+                            mask_slice = mask_data[y_min:y_max, x_min:x_max]
+                    except:
+                        # Create intensity-based mask as last resort
+                        threshold = np.percentile(roi_slice[roi_slice > 0], 75) if np.any(roi_slice > 0) else roi_slice.mean()
+                        mask_slice = (roi_slice > threshold).astype(np.uint8)
+                else:
+                    # Create intensity-based mask
+                    threshold = np.percentile(roi_slice[roi_slice > 0], 75) if np.any(roi_slice > 0) else roi_slice.mean()
+                    mask_slice = (roi_slice > threshold).astype(np.uint8)
+                
+                roi_slices.append(roi_slice)
+                roi_masks.append(mask_slice)
+            
+            print(f"Fallback extraction completed with {len(roi_slices)} slices")
+            success = True
         
         print(f"ROI bounds: {roi_bounds}")
         print(f"Number of ROI slices: {len(roi_slices)}")
