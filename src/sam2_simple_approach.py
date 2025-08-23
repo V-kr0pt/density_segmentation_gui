@@ -216,18 +216,22 @@ def safe_normalize_for_sam2(image):
 
 def apply_safe_threshold(image, mask, threshold_value):
     """
-    Apply threshold safely with proper error handling
+    Apply threshold safely using the EXACT same logic as batch_threshold_step
+    This matches ThresholdOperations.threshold_image() exactly
     """
     try:
         if image.size == 0 or mask.size == 0:
             return np.array([], dtype=np.uint8)
         
-        # Normalize image
-        normalized = safe_normalize_for_sam2(image)
+        # Use the EXACT same normalization as ThresholdOperations.normalize_data
+        mn, mx = image.min(), image.max()
+        if mx > mn:
+            norm = (image - mn) / (mx - mn)  # Exact same normalization
+        else:
+            norm = np.zeros_like(image)
         
-        # Apply threshold
-        threshold_255 = threshold_value * 255
-        thresholded = (normalized > threshold_255) & (mask > 0)
+        # Apply threshold using EXACT same logic as ThresholdOperations.threshold_image
+        thresholded = (norm > threshold_value) & (mask > 0)
         
         # Return as uint8
         return thresholded.astype(np.uint8)

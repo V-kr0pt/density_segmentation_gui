@@ -575,7 +575,7 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
                 
                 first_slice = roi_slices[0]
                 first_mask = roi_masks[0]
-                threshold_value = threshold_data.get('upper_threshold', 0.5)
+                threshold_value = threshold_data.get('threshold', 0.5)  # Changed from 'upper_threshold' to 'threshold'
                 
                 # Create threshold visualization
                 fig, axes = plt.subplots(1, 4, figsize=(20, 5))
@@ -626,8 +626,8 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         
         for slice_idx, (roi_slice, roi_mask) in enumerate(zip(roi_slices, roi_masks)):
             if slice_idx == 0:
-                # Apply threshold to first slice
-                threshold_value = threshold_data.get('upper_threshold', 0.5)
+                # Apply threshold to first slice using same key as batch_threshold_step
+                threshold_value = threshold_data.get('threshold', 0.5)  # Changed from 'upper_threshold' to 'threshold'
                 if isinstance(threshold_value, (int, float)):
                     thresholded = apply_safe_threshold(roi_slice, roi_mask, threshold_value)
                     processed_slices.append(thresholded)
@@ -1181,13 +1181,15 @@ def batch_sam2_process_step():
                         else:
                             # Convert threshold data to proper format if needed
                             if isinstance(threshold_data, (int, float)):
-                                # If threshold_data is just a number, convert to dict format
+                                # threshold_data is the direct threshold value from batch_threshold_step
                                 threshold_dict = {
-                                    'lower_threshold': 0.0,
-                                    'upper_threshold': float(threshold_data)
+                                    'threshold': float(threshold_data)  # Use 'threshold' key to match our corrected code
                                 }
                             else:
+                                # threshold_data is already a dict, ensure it has 'threshold' key
                                 threshold_dict = threshold_data
+                                if 'threshold' not in threshold_dict and 'upper_threshold' in threshold_dict:
+                                    threshold_dict['threshold'] = threshold_dict['upper_threshold']
                             
                             # Create progress container for detailed visualization
                             progress_container = st.container()
