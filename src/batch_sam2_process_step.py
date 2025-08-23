@@ -7,7 +7,12 @@ import shutil
 import cv2
 import torch
 from utils import ImageOperations, MaskOperations, ThresholdOperations
-from sam_utils import SAM2Manager
+from sam2_simple_approach import (
+    create_simple_initial_mask, 
+    safe_roi_extraction, 
+    safe_normalize_for_sam2, 
+    apply_safe_threshold
+)
 
 # SAM2 Video Predictor imports with fallback
 try:
@@ -147,114 +152,48 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         if len(nii_data.shape) != 3:
             return False, "NIfTI file must be 3D", None
         
-        # Get mask bounds from the central slice (where drawing was done)
-        central_slice_idx = mask_data.shape[0] // 2
-        central_mask = mask_data[central_slice_idx]
+        # Validate mask data
+        if mask_data is None or mask_data.size == 0:
+            return False, "Mask data is empty or None", None
         
-        # Find bounding box of the mask
-        mask_coords = np.where(central_mask > 0)
-        if len(mask_coords[0]) == 0 or len(mask_coords[1]) == 0:
-            # Try to find mask in any slice if central slice is empty
-            mask_found = False
-            for slice_idx in range(mask_data.shape[0]):
-                test_mask = mask_data[slice_idx]
-                test_coords = np.where(test_mask > 0)
-                if len(test_coords[0]) > 0 and len(test_coords[1]) > 0:
-                    central_mask = test_mask
-                    mask_coords = test_coords
-                    mask_found = True
-                    break
-            
-            if not mask_found:
-                return False, "No mask region found in any slice", None
+        # Debug info
+        print(f"NIfTI shape: {nii_data.shape}")
+        print(f"Mask shape: {mask_data.shape}")
+        print(f"Mask data type: {mask_data.dtype}")
+        print(f"Mask non-zero count: {np.count_nonzero(mask_data) if mask_data.size > 0 else 0}")
         
-        # Ensure we have valid coordinates
-        if len(mask_coords[0]) == 0 or len(mask_coords[1]) == 0:
-            return False, "Empty mask coordinates", None
+        # Use safer ROI extraction
+        roi_bounds, roi_slices, roi_masks, success = safe_roi_extraction(nii_data, mask_data)
+        if not success:
+            return False, "Failed to extract valid region of interest", None
         
-        try:
-            y_min, y_max = np.min(mask_coords[0]), np.max(mask_coords[0])
-            x_min, x_max = np.min(mask_coords[1]), np.max(mask_coords[1])
-        except ValueError as e:
-            return False, f"Error calculating mask bounds: {str(e)}", None
+        print(f"ROI bounds: {roi_bounds}")
+        print(f"Number of ROI slices: {len(roi_slices)}")
         
-        # Validate bounds
-        if y_min >= y_max or x_min >= x_max:
-            return False, "Invalid mask bounds calculated", None
+        # Process slices for SAM2
+        processed_slices = []
         
-        # Add some padding to the bounding box
-        padding = 10
-        y_min = max(0, y_min - padding)
-        y_max = min(nii_data.shape[0], y_max + padding)
-        x_min = max(0, x_min - padding)
-        x_max = min(nii_data.shape[1], x_max + padding)
-        
-        mask_bounds = (x_min, y_min, x_max, y_max)
-        
-        # Extract region of interest for all slices
-        roi_slices = []
-        original_slices = []
-        roi_masks = []
-        
-        for slice_idx in range(nii_data.shape[2]):
-            # Get the slice and corresponding mask
-            slice_data = nii_data[:, :, slice_idx]
-            mask_slice = mask_data[min(slice_idx, mask_data.shape[0] - 1)]  # Handle different sizes
-            
-            # Extract ROI
-            roi_slice = slice_data[y_min:y_max, x_min:x_max]
-            roi_mask = mask_slice[y_min:y_max, x_min:x_max]
-            
-            # Validate ROI dimensions
-            if roi_slice.size == 0 or roi_mask.size == 0:
-                return False, f"Empty ROI extracted at slice {slice_idx}", None
-            
-            original_slices.append(roi_slice.copy())
-            roi_masks.append(roi_mask)
-            
-            # Apply threshold only to the first slice
+        for slice_idx, (roi_slice, roi_mask) in enumerate(zip(roi_slices, roi_masks)):
             if slice_idx == 0:
-                # Validate that we have valid data for processing
-                if np.all(roi_slice == 0) or np.all(roi_mask == 0):
-                    return False, "First slice contains no valid data for processing", None
-                
                 # Apply threshold to first slice
-                # Normalize the image first with safe normalization
-                try:
-                    if roi_slice.size == 0:
-                        return False, "Empty ROI slice for normalization", None
-                    
-                    roi_normalized = safe_normalize_image(roi_slice)
-                        
-                except Exception as e:
-                    return False, f"Error normalizing first slice: {str(e)}", None
-                
-                # Create threshold mask
                 threshold_value = threshold_data.get('upper_threshold', 0.5)
                 if isinstance(threshold_value, (int, float)):
-                    # Convert threshold (0-1) to 0-255 range
-                    threshold_255 = threshold_value * 255
-                    thresholded_mask = (roi_normalized > threshold_255) & (roi_mask > 0)
-                    thresholded_slice = roi_normalized * thresholded_mask.astype(np.uint8)
+                    thresholded = apply_safe_threshold(roi_slice, roi_mask, threshold_value)
+                    processed_slices.append(thresholded)
                 else:
-                    thresholded_slice = roi_normalized
-                
-                roi_slices.append(thresholded_slice)
+                    processed_slices.append(safe_normalize_for_sam2(roi_slice))
             else:
                 # Keep original for other slices
-                roi_slices.append(roi_slice)
+                processed_slices.append(safe_normalize_for_sam2(roi_slice))
         
         # Convert to format suitable for SAM2 video predictor
         video_frames = []
-        for slice_data in roi_slices:
-            # Normalize to 0-255 range safely
-            slice_normalized = safe_normalize_image(slice_data)
-            
+        for slice_data in processed_slices:
             # Convert to 3-channel RGB
-            if len(slice_normalized.shape) == 2:
-                slice_rgb = np.stack([slice_normalized] * 3, axis=-1)
+            if len(slice_data.shape) == 2:
+                slice_rgb = np.stack([slice_data] * 3, axis=-1)
             else:
-                slice_rgb = slice_normalized
+                slice_rgb = slice_data
             
             video_frames.append(slice_rgb)
         
@@ -280,52 +219,68 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         if not success:
             return False, f"Failed to initialize inference state: {message}", None
         
-        # Create initial mask from thresholded first frame
-        first_frame_thresholded = roi_slices[0]
+        # Create initial mask from thresholded first frame using simple approach
+        first_frame_thresholded = processed_slices[0]
         first_frame_mask = roi_masks[0]
         
-        # Generate mask from thresholded region combined with original mask
-        if isinstance(first_frame_thresholded, np.ndarray) and first_frame_thresholded.dtype != np.uint8:
-            first_frame_norm = safe_normalize_image(first_frame_thresholded)
-        else:
-            first_frame_norm = first_frame_thresholded
+        # Create simple initial mask
+        initial_mask = create_simple_initial_mask(first_frame_thresholded, first_frame_mask)
+        if initial_mask is None:
+            return False, "Failed to create initial mask from thresholded data", None
         
-        # Combine threshold result with original mask region
-        initial_mask = ((first_frame_norm > 0) & (first_frame_mask > 0)).astype(np.uint8)
-        
-        # Validate initial mask
-        if initial_mask.size == 0 or np.sum(initial_mask) == 0:
-            return False, "No valid initial mask generated from thresholding", None
-        
-        # Optionally, use SAM2 image predictor for better initial mask
+        # Use SAM2 for automatic segmentation of the entire ROI (optional refinement)
+        from sam_utils import SAM2Manager
         sam2_image = SAM2Manager()
         img_success, img_message = sam2_image.load_model()
         
+        refined_mask = initial_mask.copy()  # Start with simple mask
+        
         if img_success:
-            # Use SAM2 to refine the initial mask
+            # Use SAM2 to automatically segment using box prompt covering entire region
             set_success, set_message = sam2_image.set_image(video_frames[0])
             if set_success:
-                # Get center point of thresholded region as prompt
-                y_coords, x_coords = np.where(initial_mask > 0)
-                if len(x_coords) > 0 and len(y_coords) > 0:
-                    center_x = int(np.mean(x_coords))
-                    center_y = int(np.mean(y_coords))
-                    
-                    input_points = np.array([[center_x, center_y]])
-                    input_labels = np.array([1])
-                    
-                    masks, scores, pred_message = sam2_image.predict(
-                        input_points=input_points,
-                        input_labels=input_labels
-                    )
-                    
-                    if masks is not None and len(masks) > 0:
-                        # Use the best mask (highest score)
-                        best_mask_idx = np.argmax(scores)
-                        initial_mask = masks[best_mask_idx].astype(np.uint8)
+                try:
+                    # Create a box covering the entire initial mask region
+                    y_coords, x_coords = np.where(initial_mask > 0)
+                    if len(x_coords) > 0 and len(y_coords) > 0:
+                        try:
+                            # Create bounding box covering the entire region
+                            bbox_x1 = max(0, np.min(x_coords) - 5)
+                            bbox_y1 = max(0, np.min(y_coords) - 5)
+                            bbox_x2 = min(initial_mask.shape[1], np.max(x_coords) + 5)
+                            bbox_y2 = min(initial_mask.shape[0], np.max(y_coords) + 5)
+                            
+                            # Use box prompt for automatic segmentation
+                            input_box = np.array([bbox_x1, bbox_y1, bbox_x2, bbox_y2])
+                            
+                            masks, scores, pred_message = sam2_image.predict(
+                                input_boxes=input_box[None, :],
+                                multimask_output=False  # Single mask for the region
+                            )
+                            
+                            if masks is not None and len(masks) > 0:
+                                # Use SAM2 mask but constrain to original ROI
+                                sam2_mask = masks[0].astype(np.uint8)
+                                # Keep only parts within the original mask region
+                                refined_mask = sam2_mask & (first_frame_mask > 0).astype(np.uint8)
+                                
+                                # Ensure we still have a valid mask
+                                if np.sum(refined_mask) == 0:
+                                    refined_mask = initial_mask  # Fallback
+                        except Exception as inner_e:
+                            print(f"Box coordinate calculation failed: {inner_e}")
+                            refined_mask = initial_mask  # Fallback
+                        
+                except Exception as e:
+                    print(f"SAM2 refinement failed: {e}")
+                    refined_mask = initial_mask  # Fallback
         
-        # Add first frame mask to video predictor
-        success, message = sam2_video.add_first_frame_mask(0, initial_mask)
+        # Final validation of the mask to use
+        if refined_mask.size == 0 or np.sum(refined_mask) == 0:
+            return False, "Failed to generate valid segmentation mask for first frame", None
+        
+        # Add first frame mask to video predictor (use the refined mask)
+        success, message = sam2_video.add_first_frame_mask(0, refined_mask)
         if not success:
             return False, f"Failed to add first frame mask: {message}", None
         
@@ -337,9 +292,9 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         # Process results and save
         results = {
             'propagated_masks': video_segments,
-            'original_slices': original_slices,
-            'roi_bounds': mask_bounds,
-            'num_slices': len(roi_slices)
+            'original_slices': roi_slices,  # Use roi_slices instead of original_slices
+            'roi_bounds': roi_bounds,
+            'num_slices': len(processed_slices)
         }
         
         # Save propagated masks
@@ -359,9 +314,9 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         
         # Create combined visualization
         create_sam2_visualization(
-            original_slices, 
+            roi_slices,  # Use roi_slices instead of original_slices
             video_segments, 
-            mask_bounds, 
+            roi_bounds,  # Use roi_bounds instead of mask_bounds
             os.path.join(output_dir, f"{filename}_sam2_visualization.png")
         )
         
@@ -601,6 +556,29 @@ def batch_sam2_process_step():
                     import nibabel as nib
                     mask_nii = nib.load(mask_path)
                     mask_data = mask_nii.get_fdata()
+                    
+                    # Debug mask data
+                    st.write(f"Debug - Loaded mask shape: {mask_data.shape}")
+                    st.write(f"Debug - Mask data type: {mask_data.dtype}")
+                    st.write(f"Debug - Mask min/max: {np.min(mask_data)}/{np.max(mask_data)}")
+                    st.write(f"Debug - Non-zero elements: {np.count_nonzero(mask_data)}")
+                    
+                    # Validate mask data
+                    if mask_data.size == 0:
+                        st.error(f"Loaded mask is empty for {filename}")
+                        st.session_state["sam2_completed_files"][filename] = {
+                            "status": "error",
+                            "message": "Loaded mask is empty"
+                        }
+                        continue
+                    
+                    if np.count_nonzero(mask_data) == 0:
+                        st.error(f"Loaded mask contains no non-zero values for {filename}")
+                        st.session_state["sam2_completed_files"][filename] = {
+                            "status": "error",
+                            "message": "Mask contains no non-zero values"
+                        }
+                        continue
                     
                     # Get threshold data from session state
                     threshold_data = thresholds.get(filename_no_ext, {})
