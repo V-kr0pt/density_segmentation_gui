@@ -593,25 +593,20 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
                 axes[1].set_title('ROI with Mask')
                 axes[1].axis('off')
                 
-                # Apply threshold visualization
+                # Apply threshold visualization (binary mask - for reference only)
                 if isinstance(threshold_value, (int, float)):
                     thresholded_preview = apply_safe_threshold(first_slice, first_mask, threshold_value)
                     axes[2].imshow(thresholded_preview, cmap='gray')
-                    axes[2].set_title(f'Thresholded (T={threshold_value:.2f})')
+                    axes[2].set_title(f'Threshold Mask (T={threshold_value:.2f})')
                 else:
-                    normalized_preview = safe_normalize_for_sam2(first_slice)
-                    axes[2].imshow(normalized_preview, cmap='gray')
-                    axes[2].set_title('Normalized')
+                    axes[2].imshow(first_mask, cmap='gray')
+                    axes[2].set_title('Original Mask')
                 axes[2].axis('off')
                 
-                # Create preview of what will be processed
-                if isinstance(threshold_value, (int, float)):
-                    preview_processed = apply_safe_threshold(first_slice, first_mask, threshold_value)
-                else:
-                    preview_processed = safe_normalize_for_sam2(first_slice)
-                
-                axes[3].imshow(preview_processed, cmap='gray')
-                axes[3].set_title('Will be Processed')
+                # Show what will actually be processed (normalized image)
+                normalized_for_sam2 = safe_normalize_for_sam2(first_slice)
+                axes[3].imshow(normalized_for_sam2, cmap='gray')
+                axes[3].set_title('Normalized for SAM2')
                 axes[3].axis('off')
                 
                 plt.tight_layout()
@@ -624,18 +619,28 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
             except Exception as viz_error:
                 print(f"Threshold visualization error: {viz_error}")
         
+        # Process slices for SAM2 - ALL slices should be normalized images, not thresholded
+        processed_slices = []
+        
+        # Get threshold value for initial mask creation only  
+        threshold_value = threshold_data.get('threshold', 0.5)
+        
+        # Normalize ALL slices to 0-255 (like batch_threshold_step displays them)
         for slice_idx, (roi_slice, roi_mask) in enumerate(zip(roi_slices, roi_masks)):
-            if slice_idx == 0:
-                # Apply threshold to first slice using same key as batch_threshold_step
-                threshold_value = threshold_data.get('threshold', 0.5)  # Changed from 'upper_threshold' to 'threshold'
-                if isinstance(threshold_value, (int, float)):
-                    thresholded = apply_safe_threshold(roi_slice, roi_mask, threshold_value)
-                    processed_slices.append(thresholded)
-                else:
-                    processed_slices.append(safe_normalize_for_sam2(roi_slice))
-            else:
-                # Keep original for other slices
-                processed_slices.append(safe_normalize_for_sam2(roi_slice))
+            # Always normalize the image (never apply threshold to the image itself)
+            normalized_slice = safe_normalize_for_sam2(roi_slice)
+            processed_slices.append(normalized_slice)
+        
+        # Create initial binary mask for SAM2 from first slice only
+        first_roi_slice = roi_slices[0]
+        first_roi_mask = roi_masks[0]
+        
+        # This creates the binary mask for SAM2 initialization (separate from images)
+        initial_binary_mask = apply_safe_threshold(first_roi_slice, first_roi_mask, threshold_value)
+        
+        print(f"Applied threshold {threshold_value} to create initial mask")
+        print(f"Initial mask has {np.sum(initial_binary_mask)} non-zero pixels")
+        print(f"All {len(processed_slices)} slices normalized to 0-255 for SAM2")
         
         # Convert to format suitable for SAM2 video predictor using JPEG folder approach
         current_step += 1
@@ -727,21 +732,27 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
             # Reset state for clean start
             sam2_video.video_predictor.reset_state(sam2_video.inference_state)
             
-            # Create bounding box from the initial mask for the first frame
-            first_frame_mask = roi_masks[0]
+            # Create bounding box from the initial binary mask (from threshold)
+            # Use the thresholded mask we created, not just the original ROI mask
             
-            # Find bounding box coordinates from the mask
-            y_coords, x_coords = np.where(first_frame_mask > 0)
+            # Find bounding box coordinates from the thresholded binary mask
+            y_coords, x_coords = np.where(initial_binary_mask > 0)
             if len(x_coords) == 0 or len(y_coords) == 0:
-                cleanup_temp_folder(temp_video_dir)
-                return False, "No valid region found in first frame mask", None
+                # Fallback to original mask if threshold mask is empty
+                y_coords, x_coords = np.where(first_roi_mask > 0)
+                if len(x_coords) == 0 or len(y_coords) == 0:
+                    cleanup_temp_folder(temp_video_dir)
+                    return False, "No valid region found in mask", None
+                print("Using original mask for bounding box (threshold mask was empty)")
+            else:
+                print("Using thresholded mask for bounding box")
             
             # Create bounding box with some padding
             padding = 5
             bbox_x_min = max(0, np.min(x_coords) - padding)
             bbox_y_min = max(0, np.min(y_coords) - padding)
-            bbox_x_max = min(first_frame_mask.shape[1], np.max(x_coords) + padding)
-            bbox_y_max = min(first_frame_mask.shape[0], np.max(y_coords) + padding)
+            bbox_x_max = min(initial_binary_mask.shape[1], np.max(x_coords) + padding)
+            bbox_y_max = min(initial_binary_mask.shape[0], np.max(y_coords) + padding)
             
             # SAM2 box format: [x_min, y_min, x_max, y_max]
             bbox = np.array([bbox_x_min, bbox_y_min, bbox_x_max, bbox_y_max], dtype=np.float32)
