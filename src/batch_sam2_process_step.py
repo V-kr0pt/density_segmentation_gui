@@ -6,7 +6,7 @@ from PIL import Image
 import shutil
 import cv2
 import torch
-from utils import ImageOperations, MaskOperations, ThresholdOperations
+from utils import ImageOperations, MaskOperations, ThresholdOperations  # Added MaskOperations
 from sam_utils import SAM2Manager
 from sam2_simple_approach import (
     create_simple_initial_mask, 
@@ -22,49 +22,6 @@ try:
     SAM2_VIDEO_AVAILABLE = True
 except ImportError:
     SAM2_VIDEO_AVAILABLE = False
-
-def save_sam2_results_like_process_step(nifti_path, output_masks, nii_img, filename_no_ext):
-    """
-    Save SAM2 results in the exact same format as batch_process_step
-    Creates: sam_dense_mask folder with mask.nii and individual slice PNGs
-    """
-    try:
-        # Create output directory structure like process_step
-        base_output_dir = os.path.join(os.getcwd(), 'output', filename_no_ext)
-        sam_dense_mask_dir = os.path.join(base_output_dir, 'sam_dense_mask')
-        
-        # Clear existing output directory
-        if os.path.exists(sam_dense_mask_dir):
-            shutil.rmtree(sam_dense_mask_dir)
-        
-        os.makedirs(sam_dense_mask_dir, exist_ok=True)
-        
-        print(f"Created SAM2 output directory: {sam_dense_mask_dir}")
-        
-        # Save individual slice PNGs (like process_step)
-        for slice_idx, mask_slice in enumerate(output_masks):
-            # Convert to binary image like process_step: np.where(thresholded_image > 0, 255, 0)
-            binary_image = np.where(mask_slice > 0, 255, 0).astype(np.uint8)
-            
-            # Save with same filename format as process_step
-            filename = f'slice_{slice_idx}_sam2.png'
-            filepath = os.path.join(sam_dense_mask_dir, filename)
-            
-            # Save with transpose like process_step: .T
-            Image.fromarray(binary_image.T, mode='L').save(filepath)
-        
-        print(f"Saved {len(output_masks)} slice PNGs")
-        
-        # Create mask.nii file like process_step using MaskOperations.create_mask_nifti
-        nifti_mask_path = MaskOperations.create_mask_nifti(sam_dense_mask_dir, nii_img.affine)
-        
-        print(f"Created mask.nii at: {nifti_mask_path}")
-        
-        return True, sam_dense_mask_dir, nifti_mask_path
-        
-    except Exception as e:
-        print(f"Error saving SAM2 results: {e}")
-        return False, None, None
 
 def test_sam2_installation():
     """Test SAM2 installation and display diagnostic info"""
@@ -1054,31 +1011,61 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
             # Clean up temporary directory
             cleanup_temp_folder(temp_video_dir)
         
-        # Prepare results
+        # Save results EXACTLY like batch_process_step
+        current_step += 1
+        update_status("Saving results in same format as process_step...")
+        update_progress(current_step, total_steps, "Saving results")
+        
+        # Create save directory structure EXACTLY like batch_process_step  
+        filename_no_ext = os.path.splitext(os.path.basename(nifti_path))[0]
+        output_path = os.path.join(output_dir, filename_no_ext)
+        save_dir = os.path.join(output_path, 'sam_dense_mask')  # Use sam_dense_mask to differentiate from process_step
+        
+        # Clear existing output directory (like batch_process_step)
+        if os.path.exists(save_dir):
+            for f in os.listdir(save_dir):
+                os.remove(os.path.join(save_dir, f))
+        
+        os.makedirs(save_dir, exist_ok=True)
+        
+        print(f"Saving results to: {save_dir}")
+        
+        # Save individual PNG files EXACTLY like batch_process_step
+        for slice_idx, full_mask in enumerate(output_masks):
+            # Convert to binary image like batch_process_step: np.where(thresholded_image > 0, 255, 0)
+            binary_image = np.where(full_mask > 0, 255, 0).astype(np.uint8)
+            
+            # Use same filename format as batch_process_step: f'slice_{slice_index}_threshold_{threshold:.4f}.png'
+            filename = f'slice_{slice_idx}_sam2_threshold_{threshold_value:.4f}.png'
+            filepath = os.path.join(save_dir, filename)
+            
+            # Save with transpose like batch_process_step: Image.fromarray(binary_image.T, mode='L')
+            Image.fromarray(binary_image.T, mode='L').save(filepath)
+            
+            print(f"Saved slice {slice_idx}: {filename}")
+        
+        # Create NIfTI file EXACTLY like batch_process_step using MaskOperations.create_mask_nifti
+        try:
+            nifti_path_result = MaskOperations.create_mask_nifti(save_dir, nii_img.affine)
+            print(f"✅ Created NIfTI file: {nifti_path_result}")
+        except Exception as nifti_error:
+            print(f"Error creating NIfTI file: {nifti_error}")
+        
+        # Prepare results with same structure
         results = {
+            "save_dir": save_dir,
             "roi_bounds": roi_bounds,
             "num_slices": len(output_masks),
-            "propagation_frames": len(video_segments)
+            "propagation_frames": len(video_segments),
+            "nifti_file": nifti_path_result if 'nifti_path_result' in locals() else None
         }
-        
-        # Save output (following traditional format)
-        current_step += 1
-        update_status("Saving results...")
-        update_progress(current_step, total_steps, "Saving output")
-        
-        output_filename = os.path.basename(nifti_path).replace('.nii', '_sam2_result.nii')
-        output_path = os.path.join(output_dir, output_filename)
-        
-        # Create 3D output - stack along first dimension like original
-        output_3d = np.stack(output_masks, axis=0)  # Shape: (slices, height, width)
-        output_nii = nib.Nifti1Image(output_3d, nii_img.affine, nii_img.header)
-        nib.save(output_nii, output_path)
         
         update_status(f"SAM2 processing completed successfully!", "success")
         update_progress(total_steps, total_steps, "Complete")
         
         print(f"✅ SAM2 processing completed successfully")
-        print(f"Output saved to: {output_path}")
+        print(f"Results saved to: {save_dir}")
+        print(f"Format: {len(output_masks)} PNG files + mask.nii (same as process_step)")
         
         return True, "SAM2 processing completed successfully", results
         
@@ -1241,44 +1228,6 @@ def batch_sam2_process_step():
     st.markdown(f"**Checkpoint:** {'✅' if checkpoint_ok else '❌'} {checkpoint_msg}")
     st.markdown('</div>', unsafe_allow_html=True)
     
-    # Initialize step-by-step processing states
-    if "sam2_step_by_step" not in st.session_state:
-        st.session_state["sam2_step_by_step"] = False
-        st.session_state["sam2_current_step"] = 0
-        st.session_state["sam2_step_data"] = {}
-        st.session_state["sam2_processing_complete"] = False
-    
-    # Step-by-step processing control
-    st.markdown('<div class="progress-section">', unsafe_allow_html=True)
-    st.markdown("### 🎮 Processing Control")
-    
-    col1, col2, col3 = st.columns([2, 2, 2])
-    
-    with col1:
-        step_by_step_mode = st.checkbox("🔍 Step-by-Step Mode", 
-                                       value=st.session_state["sam2_step_by_step"],
-                                       help="Enable to control processing step by step with detailed visualization")
-        st.session_state["sam2_step_by_step"] = step_by_step_mode
-    
-    with col2:
-        if st.button("🔄 Reset Processing", use_container_width=True):
-            st.session_state["sam2_current_step"] = 0
-            st.session_state["sam2_step_data"] = {}
-            st.session_state["sam2_processing_complete"] = False
-            st.session_state["sam2_processing_started"] = False
-            st.session_state["sam2_completed_files"] = {}
-            st.session_state["sam2_current_file_idx"] = 0
-            st.success("Processing reset!")
-            st.rerun()
-    
-    with col3:
-        if st.button("⚡ Auto Process All", use_container_width=True):
-            st.session_state["sam2_step_by_step"] = False
-            st.session_state["sam2_processing_started"] = True
-            st.rerun()
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-    
     if not deps_ok or not checkpoint_ok:
         st.error("SAM2 Setup Required")
         st.markdown(f"**Dependencies:** {deps_msg}")
@@ -1339,7 +1288,7 @@ def batch_sam2_process_step():
             st.session_state["current_step"] = "batch_threshold"
             st.rerun()
     
-    # Process files with step-by-step control
+    # Process files
     if st.session_state["sam2_processing_started"]:
         current_idx = st.session_state["sam2_current_file_idx"]
         
@@ -1348,526 +1297,168 @@ def batch_sam2_process_step():
             filename = files[current_idx]
             filename_no_ext = filename.split('.')[0]
             
-            # Step-by-step processing interface
-            if st.session_state["sam2_step_by_step"]:
-                st.markdown('<div class="progress-section">', unsafe_allow_html=True)
-                st.markdown(f"### 🎯 Step-by-Step Processing: {filename}")
-                
-                # Define processing steps
-                steps = [
-                    "Load NIfTI and validate",
-                    "Apply threshold to middle slice", 
-                    "Extract ROI from all slices",
-                    "Create JPEG frames for SAM2",
-                    "Initialize SAM2 video model",
-                    "Add box prompt to central frame",
-                    "Run SAM2 inference on central frame",
-                    "Propagate masks to all frames",
-                    "Convert results back to full image",
-                    "Save results in process_step format"
-                ]
-                
-                current_step = st.session_state["sam2_current_step"]
-                
-                # Show current step
-                st.write(f"**Current Step:** {current_step + 1}/{len(steps)}")
-                st.write(f"**Action:** {steps[current_step] if current_step < len(steps) else 'Complete'}")
-                
-                # Step navigation
-                col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
-                
-                with col1:
-                    if st.button("⏮️ Reset Steps", use_container_width=True):
-                        st.session_state["sam2_current_step"] = 0
-                        st.session_state["sam2_step_data"] = {}
-                        st.rerun()
-                
-                with col2:
-                    if current_step > 0:
-                        if st.button("⬅️ Previous Step", use_container_width=True):
-                            st.session_state["sam2_current_step"] = max(0, current_step - 1)
-                            st.rerun()
-                
-                with col3:
-                    if current_step < len(steps):
-                        if st.button("➡️ Next Step", type="primary", use_container_width=True):
-                            # Execute current step
-                            execute_sam2_step(filename, current_step, steps)
-                            st.session_state["sam2_current_step"] = current_step + 1
-                            st.rerun()
-                
-                with col4:
-                    if st.button("⏭️ Complete File", use_container_width=True):
-                        # Execute all remaining steps
-                        while st.session_state["sam2_current_step"] < len(steps):
-                            execute_sam2_step(filename, st.session_state["sam2_current_step"], steps)
-                            st.session_state["sam2_current_step"] += 1
-                        
-                        # Move to next file
-                        st.session_state["sam2_current_file_idx"] = current_idx + 1
-                        st.session_state["sam2_current_step"] = 0
-                        st.session_state["sam2_step_data"] = {}
-                        st.rerun()
-                
-                st.markdown('</div>', unsafe_allow_html=True)
-                
-                # Show step visualization area
-                step_visualization = st.empty()
-                
-                # Execute and visualize current step
-                if current_step < len(steps):
-                    visualize_sam2_step(filename, current_step, steps, step_visualization)
+            # Build file path
+            input_folder = os.path.join(os.getcwd(), 'media')
+            file_path = os.path.join(input_folder, filename)
             
-            else:
-                # Auto processing mode (original logic)
-                process_file_automatically(filename, filename_no_ext, current_idx)
-                
-        else:
-            # All files processed - show completion
-            show_sam2_completion_summary(total_files)
-
-def execute_sam2_step(filename, step_idx, steps):
-    """Execute a specific step in the SAM2 processing pipeline"""
-    filename_no_ext = filename.split('.')[0]
-    
-    try:
-        if step_idx == 0:  # Load NIfTI and validate
-            st.session_state["sam2_step_data"]["step_0_complete"] = True
+            st.markdown(f'<div class="file-status status-processing">🤖 Processing: {filename}</div>', unsafe_allow_html=True)
             
-        elif step_idx == 1:  # Apply threshold to middle slice
-            st.session_state["sam2_step_data"]["step_1_complete"] = True
+            # Get mask data from saved files (created in draw step)
+            output_path = os.path.join(os.getcwd(), 'output', filename_no_ext)
+            mask_path = os.path.join(output_path, 'dense.nii')
             
-        elif step_idx == 2:  # Extract ROI from all slices 
-            st.session_state["sam2_step_data"]["step_2_complete"] = True
-            
-        elif step_idx == 3:  # Create JPEG frames for SAM2
-            st.session_state["sam2_step_data"]["step_3_complete"] = True
-            
-        elif step_idx == 4:  # Initialize SAM2 video model
-            st.session_state["sam2_step_data"]["step_4_complete"] = True
-            
-        elif step_idx == 5:  # Add box prompt to central frame
-            st.session_state["sam2_step_data"]["step_5_complete"] = True
-            
-        elif step_idx == 6:  # Run SAM2 inference on central frame
-            st.session_state["sam2_step_data"]["step_6_complete"] = True
-            
-        elif step_idx == 7:  # Propagate masks to all frames
-            st.session_state["sam2_step_data"]["step_7_complete"] = True
-            
-        elif step_idx == 8:  # Convert results back to full image
-            st.session_state["sam2_step_data"]["step_8_complete"] = True
-            
-        elif step_idx == 9:  # Save results in process_step format
-            st.session_state["sam2_step_data"]["step_9_complete"] = True
-            # Mark file as completed
-            st.session_state["sam2_completed_files"][filename] = {
-                "status": "success",
-                "message": "SAM2 processing completed step-by-step",
-                "results": st.session_state["sam2_step_data"]
-            }
-            
-    except Exception as e:
-        st.error(f"Error in step {step_idx + 1}: {str(e)}")
-        st.session_state["sam2_step_data"][f"step_{step_idx}_error"] = str(e)
-
-def visualize_sam2_step(filename, step_idx, steps, placeholder):
-    """Visualize the current step of SAM2 processing"""
-    with placeholder.container():
-        st.markdown(f"### 📸 Step {step_idx + 1}: {steps[step_idx]}")
-        
-        if step_idx == 0:  # Load NIfTI and validate
-            st.info("🔄 Loading NIfTI file and validating dimensions...")
-            st.code("""
-            nii_img = nibabel.load(nifti_path)
-            nii_data = nii_img.get_fdata()
-            mask_data = load_mask_data()
-            
-            print(f"NIfTI shape: {nii_data.shape}")
-            print(f"Number of slices: {nii_data.shape[0]}")
-            """)
-            
-        elif step_idx == 1:  # Apply threshold to middle slice
-            st.info("🎯 Applying threshold to middle slice using process_step logic...")
-            st.code("""
-            middle_slice_idx = num_slices // 2
-            middle_image_slice = nii_data[middle_slice_idx, :, :]
-            
-            # Apply threshold exactly like ThresholdOperations.threshold_image
-            mn, mx = middle_image_slice.min(), middle_image_slice.max()
-            norm_middle = (middle_image_slice - mn) / (mx - mn)
-            thresholded_middle = (norm_middle > threshold_value) & (mask > 0)
-            """)
-            
-        elif step_idx == 2:  # Extract ROI from all slices
-            st.info("✂️ Extracting region of interest from all slices...")
-            st.code("""
-            # Find ROI bounds from thresholded middle slice
-            y_coords, x_coords = np.where(thresholded_middle > 0)
-            roi_bounds = (x_min, y_min, x_max, y_max)
-            
-            # Extract ROI from all slices
-            for slice_idx in range(num_slices):
-                roi_slice = nii_data[slice_idx, y_min:y_max, x_min:x_max]
-            """)
-            
-        elif step_idx == 3:  # Create JPEG frames for SAM2
-            st.info("🖼️ Creating JPEG frames for SAM2 video processing...")
-            st.code("""
-            # Create temporary directory with JPEG files
-            temp_dir = create_temp_jpeg_folder(processed_slices)
-            
-            # Save each slice as JPEG with proper naming
-            for i, slice_data in enumerate(processed_slices):
-                frame_filename = f"{i:05d}.jpg"
-                pil_image.save(frame_path, "JPEG", quality=95)
-            """)
-            
-        elif step_idx == 4:  # Initialize SAM2 video model
-            st.info("🤖 Initializing SAM2 video model...")
-            st.code("""
-            sam2_video = SAM2VideoManager()
-            success, message = sam2_video.load_video_model()
-            
-            # Initialize inference state with JPEG folder
-            inference_state = sam2_video.init_inference_state(temp_video_dir)
-            """)
-            
-        elif step_idx == 5:  # Add box prompt to central frame
-            st.info("📦 Adding bounding box prompt to central frame...")
-            st.code("""
-            # Create bounding box from thresholded region
-            bbox = np.array([x_min, y_min, x_max, y_max], dtype=np.float32)
-            
-            # Add box to central frame (middle slice)
-            frame_idx = middle_slice_idx
-            obj_id = 1
-            """)
-            
-        elif step_idx == 6:  # Run SAM2 inference on central frame
-            st.info("🧠 Running SAM2 inference on central frame...")
-            st.code("""
-            # SAM2 processes the box prompt
-            out_obj_ids, out_mask_logits, message = sam2_video.add_new_box_and_get_mask(
-                frame_idx, obj_id, bbox
-            )
-            
-            # Get refined segmentation from SAM2
-            sam2_mask = (out_mask_logits[0] > 0.0).cpu().numpy()
-            """)
-            
-        elif step_idx == 7:  # Propagate masks to all frames
-            st.info("🌊 Propagating masks through all video frames...")
-            st.code("""
-            # SAM2 propagates the segmentation to all frames
-            video_segments = {}
-            for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(inference_state):
-                video_segments[out_frame_idx] = {
-                    out_obj_id: (out_mask_logits[i] > 0.0).cpu().numpy()
-                    for i, out_obj_id in enumerate(out_obj_ids)
-                }
-            """)
-            
-        elif step_idx == 8:  # Convert results back to full image
-            st.info("🔄 Converting SAM2 results back to full image space...")
-            st.code("""
-            # Map ROI results back to full image dimensions
-            for slice_idx in range(num_slices):
-                full_mask = np.zeros((height, width), dtype=np.uint8)
-                if slice_idx in video_segments:
-                    roi_mask = video_segments[slice_idx][1]
-                    full_mask[y_min:y_max, x_min:x_max] = roi_mask
-                output_masks.append(full_mask)
-            """)
-            
-        elif step_idx == 9:  # Save results in process_step format
-            st.info("💾 Saving results in same format as batch_process_step...")
-            st.code("""
-            # Create sam_dense_mask folder like process_step
-            sam_dense_mask_dir = os.path.join(output_dir, 'sam_dense_mask')
-            
-            # Save individual slice PNGs
-            for slice_idx, mask_slice in enumerate(output_masks):
-                binary_image = np.where(mask_slice > 0, 255, 0).astype(np.uint8)
-                filename = f'slice_{slice_idx}_sam2.png'
-                Image.fromarray(binary_image.T, mode='L').save(filepath)
-            
-            # Create mask.nii using MaskOperations.create_mask_nifti
-            nifti_mask_path = MaskOperations.create_mask_nifti(sam_dense_mask_dir, affine)
-            """)
-
-def process_file_automatically(filename, filename_no_ext, current_idx):
-    """Process file automatically without step-by-step control"""
-    # Build file path
-    input_folder = os.path.join(os.getcwd(), 'media')
-    file_path = os.path.join(input_folder, filename)
-    
-    st.markdown(f'<div class="file-status status-processing">🤖 Processing: {filename}</div>', unsafe_allow_html=True)
-    
-    # Get mask data from saved files (created in draw step)
-    output_path = os.path.join(os.getcwd(), 'output', filename_no_ext)
-    mask_path = os.path.join(output_path, 'dense.nii')
-    
-    if not os.path.exists(mask_path):
-        st.error(f"Mask file not found: {mask_path}")
-        st.session_state["sam2_completed_files"][filename] = {
-            "status": "error",
-            "message": "Mask file not found - draw step may not be completed"
-        }
-    else:
-        # Load mask data from file
-        try:
-            mask_img = nib.load(mask_path)
-            mask_data = mask_img.get_fdata()
-            mask_data = mask_data.astype(np.uint8)
-            
-            # SAM2 Processing Implementation
-            # Initialize progress
-            st.markdown('<div class="progress-section">', unsafe_allow_html=True)
-            progress_bar = st.progress(0.0)
-            status_text = st.empty()
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            try:
-                # Load NIfTI
-                status_text.text("Loading NIfTI file...")
-                progress_bar.progress(0.1)
-                nii_img = nib.load(file_path)
-                nii_data = nii_img.get_fdata()
-                
-                # Validate dimensions
-                if len(nii_data.shape) != 3:
-                    raise ValueError(f"Expected 3D data, got shape: {nii_data.shape}")
-                
-                num_slices, height, width = nii_data.shape
-                middle_slice_idx = num_slices // 2
-                
-                # Get threshold from session state
-                threshold_value = st.session_state.get("sam2_threshold", 0.5)
-                
-                status_text.text("Processing middle slice with threshold...")
-                progress_bar.progress(0.2)
-                
-                # Apply threshold to middle slice using the corrected approach
-                middle_image_slice = nii_data[middle_slice_idx, :, :]
-                mask_middle_slice = mask_data[middle_slice_idx, :, :] if len(mask_data.shape) == 3 else mask_data[:, :, middle_slice_idx]
-                
-                # Apply threshold using same logic as batch_threshold_step
-                thresholded_middle = apply_safe_threshold(middle_image_slice, mask_middle_slice, threshold_value)
-                
-                if not np.any(thresholded_middle):
-                    st.warning(f"⚠️ No thresholded pixels found in middle slice {middle_slice_idx}. Trying adjacent slices...")
-                    
-                    # Try adjacent slices
-                    for offset in [1, -1, 2, -2]:
-                        test_idx = middle_slice_idx + offset
-                        if 0 <= test_idx < num_slices:
-                            test_slice = nii_data[test_idx, :, :]
-                            test_mask = mask_data[test_idx, :, :] if len(mask_data.shape) == 3 else mask_data[:, :, test_idx]
-                            test_result = apply_safe_threshold(test_slice, test_mask, threshold_value)
-                            if np.any(test_result):
-                                middle_slice_idx = test_idx
-                                thresholded_middle = test_result
-                                st.info(f"✅ Found thresholded content in slice {test_idx}")
-                                break
-                    
-                    if not np.any(thresholded_middle):
-                        raise ValueError("No thresholded pixels found in any slice")
-                
-                # ROI Extraction
-                status_text.text("Extracting region of interest...")
-                progress_bar.progress(0.3)
-                
-                y_coords, x_coords = np.where(thresholded_middle > 0)
-                if len(y_coords) == 0:
-                    raise ValueError("No valid pixels found after thresholding")
-                
-                x_min, x_max = int(x_coords.min()), int(x_coords.max())
-                y_min, y_max = int(y_coords.min()), int(y_coords.max())
-                
-                # Add margin to ROI
-                margin = 20
-                x_min = max(0, x_min - margin)
-                y_min = max(0, y_min - margin)
-                x_max = min(width, x_max + margin)
-                y_max = min(height, y_max + margin)
-                
-                roi_width = x_max - x_min
-                roi_height = y_max - y_min
-                
-                st.info(f"ROI extracted: ({x_min}, {y_min}) to ({x_max}, {y_max}) - Size: {roi_width}x{roi_height}")
-                
-                # Prepare slices for SAM2
-                status_text.text("Preparing slices for SAM2...")
-                progress_bar.progress(0.4)
-                
-                processed_slices = []
-                for slice_idx in range(num_slices):
-                    # Extract ROI slice
-                    slice_data = nii_data[slice_idx, y_min:y_max, x_min:x_max]
-                    
-                    # Normalize for SAM2
-                    processed_slice = safe_normalize_for_sam2(slice_data)
-                    processed_slices.append(processed_slice)
-                
-                # Create temporary JPEG folder for SAM2
-                status_text.text("Creating JPEG frames for SAM2...")
-                progress_bar.progress(0.5)
-                
-                import tempfile
-                temp_video_dir = tempfile.mkdtemp(prefix='sam2_video_')
-                
-                try:
-                    # Save all slices as JPEG files
-                    for i, slice_data in enumerate(processed_slices):
-                        # Convert to PIL Image
-                        pil_image = Image.fromarray(slice_data).convert('RGB')
-                        frame_filename = f"{i:05d}.jpg"
-                        frame_path = os.path.join(temp_video_dir, frame_filename)
-                        pil_image.save(frame_path, "JPEG", quality=95)
-                    
-                    # Initialize SAM2 Video Manager
-                    status_text.text("Initializing SAM2 video model...")
-                    progress_bar.progress(0.6)
-                    
-                    sam2_video = SAM2Manager()
-                    success, message = sam2_video.load_video_model()
-                    
-                    if not success:
-                        raise RuntimeError(f"Failed to load SAM2 model: {message}")
-                    
-                    # Initialize inference state
-                    inference_state = sam2_video.init_inference_state(temp_video_dir)
-                    if inference_state is None:
-                        raise RuntimeError("Failed to initialize SAM2 inference state")
-                    
-                    # Create bounding box for thresholded region (in ROI coordinates)
-                    status_text.text("Adding box prompt to central frame...")
-                    progress_bar.progress(0.7)
-                    
-                    # Find bounding box in ROI space
-                    roi_thresholded = thresholded_middle[y_min:y_max, x_min:x_max]
-                    roi_y_coords, roi_x_coords = np.where(roi_thresholded > 0)
-                    
-                    if len(roi_y_coords) == 0:
-                        raise ValueError("No thresholded pixels in ROI")
-                    
-                    bbox_x_min = float(roi_x_coords.min())
-                    bbox_y_min = float(roi_y_coords.min())
-                    bbox_x_max = float(roi_x_coords.max())
-                    bbox_y_max = float(roi_y_coords.max())
-                    
-                    bbox = np.array([bbox_x_min, bbox_y_min, bbox_x_max, bbox_y_max], dtype=np.float32)
-                    
-                    # Add box to central frame
-                    frame_idx = middle_slice_idx
-                    obj_id = 1
-                    
-                    out_obj_ids, out_mask_logits, message = sam2_video.add_new_box_and_get_mask(frame_idx, obj_id, bbox)
-                    
-                    if out_obj_ids is None:
-                        raise RuntimeError(f"SAM2 box processing failed: {message}")
-                    
-                    st.info(f"✅ SAM2 processed central frame {frame_idx} with box: {bbox}")
-                    
-                    # Propagate through video
-                    status_text.text("Running SAM2 video propagation...")
-                    progress_bar.progress(0.8)
-                    
-                    video_segments = sam2_video.propagate_in_video(inference_state)
-                    
-                    if not video_segments:
-                        raise RuntimeError("SAM2 video propagation failed - no segments returned")
-                    
-                    st.info(f"✅ SAM2 propagated to {len(video_segments)} frames")
-                    
-                    # Convert back to full image space
-                    status_text.text("Converting results to full image space...")
-                    progress_bar.progress(0.9)
-                    
-                    output_masks = []
-                    for slice_idx in range(num_slices):
-                        # Initialize full slice mask
-                        full_mask = np.zeros((height, width), dtype=np.uint8)
-                        
-                        # Check if this slice has SAM2 results
-                        if slice_idx in video_segments and obj_id in video_segments[slice_idx]:
-                            # Get ROI mask from SAM2
-                            roi_mask = video_segments[slice_idx][obj_id]
-                            
-                            # Map back to full image space
-                            full_mask[y_min:y_max, x_min:x_max] = roi_mask.astype(np.uint8)
-                        
-                        output_masks.append(full_mask)
-                    
-                    # Save results in same format as batch_process_step
-                    status_text.text("Saving results in process_step format...")
-                    save_sam2_results_like_process_step(file_path, output_masks, nii_img, filename_no_ext)
-                    
-                    progress_bar.progress(1.0)
-                    status_text.text("✅ SAM2 processing completed!")
-                    
-                    # Mark as completed
-                    st.session_state["sam2_completed_files"][filename] = {
-                        "status": "success",
-                        "message": f"SAM2 processing completed. ROI: {roi_width}x{roi_height}, Propagated to {len(video_segments)} frames"
-                    }
-                    
-                finally:
-                    # Clean up temporary directory
-                    if os.path.exists(temp_video_dir):
-                        shutil.rmtree(temp_video_dir)
-            
-            except Exception as e:
-                st.error(f"❌ SAM2 processing failed: {str(e)}")
+            if not os.path.exists(mask_path):
+                st.error(f"Mask file not found: {mask_path}")
                 st.session_state["sam2_completed_files"][filename] = {
                     "status": "error",
-                    "message": str(e)
+                    "message": "Mask file not found - draw step may not be completed"
                 }
+            else:
+                # Load mask data from file
+                try:
+                    import nibabel as nib
+                    mask_nii = nib.load(mask_path)
+                    mask_data = mask_nii.get_fdata()
+                    
+                    # Debug mask data with visualizations
+                    st.write(f"**📊 Mask Analysis for {filename}:**")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Shape", f"{mask_data.shape}")
+                    with col2:
+                        st.metric("Data Type", f"{mask_data.dtype}")
+                    with col3:
+                        st.metric("Non-zero pixels", f"{np.count_nonzero(mask_data):,}")
+                    
+                    # Show mask value range
+                    mask_min, mask_max = np.min(mask_data), np.max(mask_data)
+                    st.write(f"Value range: [{mask_min:.3f}, {mask_max:.3f}]")
+                    
+                    # Validate mask data
+                    if mask_data.size == 0:
+                        st.error(f"Loaded mask is empty for {filename}")
+                        st.session_state["sam2_completed_files"][filename] = {
+                            "status": "error",
+                            "message": "Loaded mask is empty"
+                        }
+                    elif np.count_nonzero(mask_data) == 0:
+                        st.error(f"Loaded mask contains no non-zero values for {filename}")
+                        st.session_state["sam2_completed_files"][filename] = {
+                            "status": "error",
+                            "message": "Mask contains no non-zero values"
+                        }
+                    else:
+                        # Get threshold data from session state
+                        threshold_data = thresholds.get(filename_no_ext, {})
+                        
+                        if not threshold_data:
+                            st.error(f"No threshold data found for {filename}")
+                            st.session_state["sam2_completed_files"][filename] = {
+                                "status": "error", 
+                                "message": "No threshold data found"
+                            }
+                        else:
+                            # Convert threshold data to proper format if needed
+                            if isinstance(threshold_data, (int, float)):
+                                # threshold_data is the direct threshold value from batch_threshold_step
+                                threshold_dict = {
+                                    'threshold': float(threshold_data)  # Use 'threshold' key to match our corrected code
+                                }
+                            else:
+                                # threshold_data is already a dict, ensure it has 'threshold' key
+                                threshold_dict = threshold_data
+                                if 'threshold' not in threshold_dict and 'upper_threshold' in threshold_dict:
+                                    threshold_dict['threshold'] = threshold_dict['upper_threshold']
+                            
+                            # Create progress container for detailed visualization
+                            progress_container = st.container()
+                            
+                            with progress_container:
+                                st.write("### 🔍 SAM2 Processing Details")
+                                
+                                # Create placeholder for dynamic updates
+                                status_placeholder = st.empty()
+                                visualization_placeholder = st.empty()
+                                progress_placeholder = st.empty()
+                                
+                                # Update status
+                                with status_placeholder.container():
+                                    st.info(f"🚀 Starting SAM2 processing for {filename}")
+                            
+                            # Process with SAM2 and pass visualization containers
+                            success, message, results = process_nifti_with_sam2_propagation(
+                                file_path, mask_data, threshold_dict, output_dir,
+                                status_placeholder, visualization_placeholder, progress_placeholder
+                            )
+                            
+                            st.session_state["sam2_completed_files"][filename] = {
+                                "status": "success" if success else "error",
+                                "message": message,
+                                "results": results
+                            }
+                            
+                            if success:
+                                st.success(f"✅ {filename}: {message}")
+                            else:
+                                st.error(f"❌ {filename}: {message}")
+                            
+                except Exception as e:
+                    st.error(f"Error loading mask data: {str(e)}")
+                    st.session_state["sam2_completed_files"][filename] = {
+                        "status": "error",
+                        "message": f"Error loading mask data: {str(e)}"
+                    }
+            
+            # Move to next file
+            st.session_state["sam2_current_file_idx"] += 1
+            st.rerun()
         
-        except Exception as e:
-            st.error(f"❌ Error loading mask file: {str(e)}")
-            st.session_state["sam2_completed_files"][filename] = {
-                "status": "error",
-                "message": f"Error loading mask: {str(e)}"
-            }
+        else:
+            # All files processed
+            st.markdown('<div class="step-container">', unsafe_allow_html=True)
+            st.markdown("### 🎉 SAM2 Processing Complete!")
+            st.markdown(f"Successfully processed {total_files} files using SAM2 video propagation.")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Show completion statistics
+            success_count = sum(1 for result in st.session_state["sam2_completed_files"].values() 
+                              if result["status"] == "success")
+            error_count = total_files - success_count
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("✅ Successful", success_count)
+            with col2:
+                st.metric("❌ Errors", error_count)
     
-    # Move to next file
-    st.session_state["sam2_current_file_idx"] = current_idx + 1
-    st.rerun()
+    # Show detailed results
+    if st.session_state["sam2_completed_files"]:
+        st.markdown('<div class="progress-section">', unsafe_allow_html=True)
+        st.markdown("### 📋 Detailed Results")
+        
+        for filename, result in st.session_state["sam2_completed_files"].items():
+            status_class = "status-success" if result["status"] == "success" else "status-error"
+            status_icon = "✅" if result["status"] == "success" else "❌"
+            
+            st.markdown(f'<div class="file-status {status_class}">{status_icon} {filename}: {result["message"]}</div>', 
+                       unsafe_allow_html=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
 
-def show_sam2_completion_summary(total_files):
-    """Show completion summary when all files are processed"""
-    st.markdown('<div class="step-container">', unsafe_allow_html=True)
-    st.markdown("### 🎉 SAM2 Processing Complete!")
-    st.markdown(f"Successfully processed {total_files} files using SAM2 video propagation.")
-    
-    # Show completion statistics
-    success_count = sum(1 for result in st.session_state["sam2_completed_files"].values() 
-                      if result["status"] == "success")
-    error_count = total_files - success_count
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("✅ Successful", success_count)
-    with col2:
-        st.metric("❌ Errors", error_count)
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-def save_processing_results():
-    """Save processing results to JSON file"""
+def save_sam2_results():
+    """Save SAM2 processing results"""
     try:
-        results_file = os.path.join(os.getcwd(), 'output', 'sam2_processing_results.json')
+        output_dir = "output"
+        results_file = os.path.join(output_dir, "sam2_processing_results.json")
         
-        # Prepare JSON-serializable results
-        json_results = {
-            filename: {
+        # Prepare results for JSON serialization
+        json_results = {}
+        for filename, result in st.session_state["sam2_completed_files"].items():
+            json_results[filename] = {
                 "status": result["status"],
                 "message": result["message"],
                 "has_results": result.get("results") is not None
             }
-            for filename, result in st.session_state["sam2_completed_files"].items()
-        }
         
         with open(results_file, 'w') as f:
             import json
