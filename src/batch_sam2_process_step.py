@@ -537,10 +537,73 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         update_progress(current_step, total_steps, "Extracting ROI")
         
         # Extract representative slice for ROI calculation (middle slice like traditional mode)
-        middle_slice_idx = num_slices // 2
+        middle_slice_idx = num_slices // 2  # Use middle slice like process_step
         middle_image_slice = nii_data[middle_slice_idx, :, :]  # Shape: (height, width)
         middle_mask_slice = mask_data[middle_slice_idx, :, :] if mask_data.shape[0] > middle_slice_idx else mask_data[0, :, :]
         
+        print(f"Using middle slice {middle_slice_idx} for threshold application (like process_step)")
+        
+        # Apply threshold to middle slice EXACTLY like process_step does
+        current_step += 1
+        update_status(f"Applying threshold to middle slice {middle_slice_idx} (like process_step)")
+        update_progress(current_step, total_steps, "Applying threshold")
+        
+        # Get threshold value (convert from dict format if needed)
+        if isinstance(threshold_data, (int, float)):
+            threshold_value = float(threshold_data)
+        else:
+            threshold_value = threshold_data.get('threshold', 0.5)
+        
+        print(f"Using threshold value: {threshold_value}")
+        
+        # Apply threshold EXACTLY like ThresholdOperations.threshold_image in process_step
+        mn, mx = middle_image_slice.min(), middle_image_slice.max()
+        if mx > mn:
+            norm_middle = (middle_image_slice - mn) / (mx - mn)
+        else:
+            norm_middle = np.zeros_like(middle_image_slice)
+        
+        # Apply threshold: (normalized > threshold) & (mask > 0) - EXACT same logic
+        thresholded_middle = (norm_middle > threshold_value) & (middle_mask_slice > 0)
+        
+        print(f"Threshold applied - pixels: {np.sum(thresholded_middle)} out of {thresholded_middle.size}")
+        
+        # Show threshold visualization before SAM2 processing
+        if visualization_placeholder:
+            try:
+                fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+                
+                # Original middle slice 
+                axes[0].imshow(middle_image_slice, cmap='gray')
+                axes[0].set_title(f'Original Middle Slice {middle_slice_idx}')
+                axes[0].axis('off')
+                
+                # Normalized middle slice
+                axes[1].imshow(norm_middle, cmap='gray') 
+                axes[1].set_title(f'Normalized (like process_step)')
+                axes[1].axis('off')
+                
+                # Mask
+                axes[2].imshow(middle_mask_slice, cmap='gray')
+                axes[2].set_title('Mask')
+                axes[2].axis('off')
+                
+                # Thresholded result (what will go to SAM2)
+                axes[3].imshow(thresholded_middle, cmap='gray')
+                axes[3].set_title(f'Thresholded (T={threshold_value:.3f})')
+                axes[3].axis('off')
+                
+                plt.tight_layout()
+                
+                with visualization_placeholder.container():
+                    st.write("**Threshold Application (Process Step Logic):**")
+                    st.pyplot(fig)
+                    st.write(f"**Threshold Value:** {threshold_value:.3f} | **Pixels:** {np.sum(thresholded_middle):,} | **Middle Slice:** {middle_slice_idx}")
+                
+                plt.close()
+                
+            except Exception as viz_error:
+                print(f"Threshold visualization error: {viz_error}")
         # Use traditional ROI extraction approach (but adapted for SAM2)
         roi_bounds, roi_slices, roi_masks, success = extract_roi_traditional_approach(
             nii_data, mask_data, middle_image_slice, middle_mask_slice, num_slices
@@ -577,44 +640,41 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
                 first_mask = roi_masks[0]
                 threshold_value = threshold_data.get('threshold', 0.5)  # Changed from 'upper_threshold' to 'threshold'
                 
-                # Create threshold visualization exactly like batch_threshold_step
+                # Create threshold visualization
                 fig, axes = plt.subplots(1, 4, figsize=(20, 5))
                 
-                # 1. Original ROI slice (like batch_threshold_step)
-                axes[0].imshow(first_slice, cmap='gray')
-                axes[0].set_title('Original ROI')
+                # Original ROI slice
+                roi_norm = (first_slice - np.min(first_slice)) / (np.max(first_slice) - np.min(first_slice) + 1e-8)
+                axes[0].imshow(roi_norm, cmap='gray')
+                axes[0].set_title('Original ROI Slice')
                 axes[0].axis('off')
                 
-                # 2. Mask overlay
-                axes[1].imshow(first_slice, cmap='gray')
-                axes[1].imshow(first_mask, cmap='jet', alpha=0.3)
-                axes[1].set_title('ROI + Mask')
+                # Mask overlay
+                axes[1].imshow(roi_norm, cmap='gray')
+                mask_overlay = np.ma.masked_where(first_mask == 0, first_mask)
+                axes[1].imshow(mask_overlay, cmap='jet', alpha=0.6)
+                axes[1].set_title('ROI with Mask')
                 axes[1].axis('off')
                 
-                # 3. Threshold applied exactly like batch_threshold_step
+                # Apply threshold visualization
                 if isinstance(threshold_value, (int, float)):
-                    # Apply threshold using same logic as ThresholdOperations.threshold_image
-                    mn, mx = first_slice.min(), first_slice.max()
-                    norm = (first_slice - mn) / (mx - mn) if mx > mn else np.zeros_like(first_slice)
-                    bin_mask = (norm > threshold_value) & (first_mask > 0)
-                    
-                    # Display exactly like batch_threshold_step
-                    axes[2].imshow(first_slice, cmap='gray')  # Original image in grayscale
-                    axes[2].imshow(bin_mask, cmap='jet', alpha=0.2)  # Threshold mask with transparency
+                    thresholded_preview = apply_safe_threshold(first_slice, first_mask, threshold_value)
+                    axes[2].imshow(thresholded_preview, cmap='gray')
                     axes[2].set_title(f'Thresholded (T={threshold_value:.2f})')
                 else:
-                    axes[2].imshow(first_slice, cmap='gray')
-                    axes[2].imshow(first_mask, cmap='jet', alpha=0.2)
-                    axes[2].set_title('Original Mask')
+                    normalized_preview = safe_normalize_for_sam2(first_slice)
+                    axes[2].imshow(normalized_preview, cmap='gray')
+                    axes[2].set_title('Normalized')
                 axes[2].axis('off')
                 
-                # 4. Final binary mask for SAM2
+                # Create preview of what will be processed
                 if isinstance(threshold_value, (int, float)):
-                    axes[3].imshow(bin_mask, cmap='gray')
-                    axes[3].set_title('Binary Mask for SAM2')
+                    preview_processed = apply_safe_threshold(first_slice, first_mask, threshold_value)
                 else:
-                    axes[3].imshow(first_mask, cmap='gray')
-                    axes[3].set_title('Original Mask for SAM2')
+                    preview_processed = safe_normalize_for_sam2(first_slice)
+                
+                axes[3].imshow(preview_processed, cmap='gray')
+                axes[3].set_title('Will be Processed')
                 axes[3].axis('off')
                 
                 plt.tight_layout()
@@ -627,28 +687,21 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
             except Exception as viz_error:
                 print(f"Threshold visualization error: {viz_error}")
         
-        # Process slices for SAM2 - ALL slices should be normalized images, not thresholded
-        processed_slices = []
-        
-        # Get threshold value for initial mask creation only  
-        threshold_value = threshold_data.get('threshold', 0.5)
-        
-        # Normalize ALL slices to 0-255 (like batch_threshold_step displays them)
         for slice_idx, (roi_slice, roi_mask) in enumerate(zip(roi_slices, roi_masks)):
-            # Always normalize the image (never apply threshold to the image itself)
-            normalized_slice = safe_normalize_for_sam2(roi_slice)
-            processed_slices.append(normalized_slice)
+            if slice_idx == middle_slice_idx:
+                # Use the THRESHOLDED middle slice for the central frame (CRITICAL for SAM2)
+                # Extract ROI from the thresholded middle slice
+                x_min, y_min, x_max, y_max = roi_bounds
+                thresholded_middle_roi = thresholded_middle[y_min:y_max, x_min:x_max]
+                processed_slices.append(thresholded_middle_roi.astype(np.uint8))
+                print(f"✅ Added THRESHOLDED middle slice {slice_idx} as central frame for SAM2")
+            else:
+                # For other slices, just normalize them (they will be propagated by SAM2)
+                normalized_slice = safe_normalize_for_sam2(roi_slice)
+                processed_slices.append(normalized_slice)
+                print(f"Added normalized slice {slice_idx}")
         
-        # Create initial binary mask for SAM2 from first slice only
-        first_roi_slice = roi_slices[0]
-        first_roi_mask = roi_masks[0]
-        
-        # This creates the binary mask for SAM2 initialization (separate from images)
-        initial_binary_mask = apply_safe_threshold(first_roi_slice, first_roi_mask, threshold_value)
-        
-        print(f"Applied threshold {threshold_value} to create initial mask")
-        print(f"Initial mask has {np.sum(initial_binary_mask)} non-zero pixels")
-        print(f"All {len(processed_slices)} slices normalized to 0-255 for SAM2")
+        print(f"Total processed slices: {len(processed_slices)}, Central thresholded slice: {middle_slice_idx}")
         
         # Convert to format suitable for SAM2 video predictor using JPEG folder approach
         current_step += 1
@@ -740,36 +793,69 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
             # Reset state for clean start
             sam2_video.video_predictor.reset_state(sam2_video.inference_state)
             
-            # Create bounding box from the initial binary mask (from threshold)
-            # Use the thresholded mask we created, not just the original ROI mask
+            # Create bounding box from the THRESHOLDED middle slice for the central frame
+            # Use the ROI bounds we calculated from the middle slice
+            x_min, y_min, x_max, y_max = roi_bounds
+            thresholded_middle_roi = thresholded_middle[y_min:y_max, x_min:x_max]
             
-            # Find bounding box coordinates from the thresholded binary mask
-            y_coords, x_coords = np.where(initial_binary_mask > 0)
+            # Find bounding box coordinates from the thresholded middle ROI
+            y_coords, x_coords = np.where(thresholded_middle_roi > 0)
             if len(x_coords) == 0 or len(y_coords) == 0:
-                # Fallback to original mask if threshold mask is empty
-                y_coords, x_coords = np.where(first_roi_mask > 0)
-                if len(x_coords) == 0 or len(y_coords) == 0:
-                    cleanup_temp_folder(temp_video_dir)
-                    return False, "No valid region found in mask", None
-                print("Using original mask for bounding box (threshold mask was empty)")
-            else:
-                print("Using thresholded mask for bounding box")
+                cleanup_temp_folder(temp_video_dir)
+                return False, "No valid thresholded region found in middle slice ROI", None
             
             # Create bounding box with some padding
             padding = 5
             bbox_x_min = max(0, np.min(x_coords) - padding)
             bbox_y_min = max(0, np.min(y_coords) - padding)
-            bbox_x_max = min(initial_binary_mask.shape[1], np.max(x_coords) + padding)
-            bbox_y_max = min(initial_binary_mask.shape[0], np.max(y_coords) + padding)
+            bbox_x_max = min(thresholded_middle_roi.shape[1], np.max(x_coords) + padding)
+            bbox_y_max = min(thresholded_middle_roi.shape[0], np.max(y_coords) + padding)
             
             # SAM2 box format: [x_min, y_min, x_max, y_max]
             bbox = np.array([bbox_x_min, bbox_y_min, bbox_x_max, bbox_y_max], dtype=np.float32)
             
-            print(f"Using bounding box: {bbox}")
+            print(f"Using bounding box from thresholded middle slice: {bbox}")
             
-            # Add box to first frame (frame index 0, object id 1)
-            frame_idx = 0
+            # Add box to MIDDLE frame (not first frame) - this is the thresholded central slice
+            frame_idx = middle_slice_idx  # Use middle slice as central frame
             obj_id = 1
+            
+            # Show SAM2 inference visualization BEFORE propagation
+            if visualization_placeholder:
+                try:
+                    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+                    
+                    # Show the thresholded middle slice that will receive the box prompt
+                    axes[0].imshow(thresholded_middle_roi, cmap='gray')
+                    rect = plt.Rectangle((bbox_x_min, bbox_y_min), bbox_x_max-bbox_x_min, bbox_y_max-bbox_y_min, 
+                                       fill=False, color='red', linewidth=2)
+                    axes[0].add_patch(rect)
+                    axes[0].set_title(f'Central Frame {middle_slice_idx} + Box Prompt')
+                    axes[0].axis('off')
+                    
+                    # Show just the bounding box region
+                    bbox_region = thresholded_middle_roi[bbox_y_min:bbox_y_max, bbox_x_min:bbox_x_max]
+                    axes[1].imshow(bbox_region, cmap='gray')
+                    axes[1].set_title('Box Region (SAM2 Input)')
+                    axes[1].axis('off')
+                    
+                    # Placeholder for SAM2 result (will be updated after inference)
+                    axes[2].text(0.5, 0.5, 'SAM2 Result\n(Processing...)', 
+                               ha='center', va='center', transform=axes[2].transAxes, fontsize=12)
+                    axes[2].set_title('SAM2 Inference Result')
+                    axes[2].axis('off')
+                    
+                    plt.tight_layout()
+                    
+                    with visualization_placeholder.container():
+                        st.write("**🤖 SAM2 Box Prompt Inference:**")
+                        st.pyplot(fig)
+                        st.write(f"**Central Frame:** {middle_slice_idx} | **Box:** {bbox} | **Threshold:** {threshold_value:.3f}")
+                    
+                    plt.close()
+                    
+                except Exception as viz_error:
+                    print(f"SAM2 inference visualization error: {viz_error}")
             
             out_obj_ids, out_mask_logits, box_message = sam2_video.add_new_box_and_get_mask(
                 frame_idx, obj_id, bbox
@@ -779,7 +865,51 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
                 cleanup_temp_folder(temp_video_dir)
                 return False, f"Failed to add bounding box: {box_message}", None
             
-            print(f"Bounding box added successfully: {box_message}")
+            print(f"Bounding box added successfully to frame {frame_idx}: {box_message}")
+            
+            # Show SAM2 inference result
+            if visualization_placeholder and out_mask_logits is not None:
+                try:
+                    # Get the SAM2 result mask for the central frame
+                    sam2_mask = (out_mask_logits[0] > 0.0).cpu().numpy()
+                    
+                    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+                    
+                    # Original thresholded 
+                    axes[0].imshow(thresholded_middle_roi, cmap='gray')
+                    axes[0].set_title(f'Original Thresholded {middle_slice_idx}')
+                    axes[0].axis('off')
+                    
+                    # Box prompt visualization
+                    axes[1].imshow(thresholded_middle_roi, cmap='gray')
+                    rect = plt.Rectangle((bbox_x_min, bbox_y_min), bbox_x_max-bbox_x_min, bbox_y_max-bbox_y_min, 
+                                       fill=False, color='red', linewidth=2)
+                    axes[1].add_patch(rect)
+                    axes[1].set_title('Box Prompt')
+                    axes[1].axis('off')
+                    
+                    # SAM2 result
+                    axes[2].imshow(sam2_mask, cmap='gray')
+                    axes[2].set_title('SAM2 Inference Result')
+                    axes[2].axis('off')
+                    
+                    # Overlay comparison
+                    axes[3].imshow(thresholded_middle_roi, cmap='gray', alpha=0.7)
+                    axes[3].imshow(sam2_mask, cmap='jet', alpha=0.5)
+                    axes[3].set_title('Overlay: Gray=Original, Color=SAM2')
+                    axes[3].axis('off')
+                    
+                    plt.tight_layout()
+                    
+                    with visualization_placeholder.container():
+                        st.write("**✅ SAM2 Inference Complete:**")
+                        st.pyplot(fig)
+                        st.write(f"**SAM2 pixels:** {np.sum(sam2_mask):,} | **Original pixels:** {np.sum(thresholded_middle_roi):,}")
+                    
+                    plt.close()
+                    
+                except Exception as viz_error:
+                    print(f"SAM2 result visualization error: {viz_error}")
             
             # Propagate masks through all frames
             current_step += 1
