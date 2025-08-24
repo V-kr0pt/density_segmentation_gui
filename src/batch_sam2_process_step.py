@@ -702,16 +702,30 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
                 normalized_slice = safe_normalize_for_sam2(roi_slice)
                 processed_slices.append(normalized_slice)
                 print(f"Added normalized slice {slice_idx}")
-        
         print(f"Total processed slices: {len(processed_slices)}, Central thresholded slice: {middle_slice_idx}")
         
-        # Convert to format suitable for SAM2 video predictor using JPEG folder approach
+        # Create JPEG sequence: Central thresholded FIRST, then all roi_slices
         current_step += 1
-        update_status("Creating temporary JPEG folder for SAM2...")
+        update_status("Creating JPEG sequence for SAM2 video propagation...")
         update_progress(current_step, total_steps, "Creating JPEG files")
         
-        print("Creating temporary JPEG folder for SAM2...")
-        temp_video_dir, frame_names, jpeg_success = create_temp_jpeg_folder(processed_slices)
+        print("Creating JPEG sequence: Central thresholded first, then all roi_slices...")
+        
+        # Prepare sequence: [central_thresholded, roi_slice_0, roi_slice_1, ..., roi_slice_N]
+        video_sequence = []
+        
+        # Frame 0: Central thresholded slice
+        video_sequence.append(thresholded_middle)
+        print(f"Frame 0: Central thresholded slice {middle_slice_idx}")
+        
+        # Frames 1, 2, 3... N: All roi_slices in original order
+        for slice_idx, roi_slice in enumerate(roi_slices):
+            video_sequence.append(roi_slice)
+        
+        print(f"Video sequence: 1 central + {len(roi_slices)} roi_slices = {len(video_sequence)} total frames")
+        
+        # Create JPEG folder with the complete sequence
+        temp_video_dir, frame_names, jpeg_success = create_temp_jpeg_folder(video_sequence)
         
         if not jpeg_success:
             update_status("Failed to create temporary JPEG folder", "error")
@@ -818,9 +832,11 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
             
             print(f"Using bounding box from thresholded middle slice: {bbox}")
             
-            # Add box to MIDDLE frame (not first frame) - this is the thresholded central slice
-            frame_idx = middle_slice_idx  # Use middle slice as central frame
+            # Add box to FRAME 0 (central thresholded) - this is the first frame now
+            frame_idx = 0  # Central thresholded is now frame 0
             obj_id = 1
+            
+            print(f"Adding box prompt to frame 0 (central thresholded slice {middle_slice_idx})")
             
             # Show SAM2 inference visualization BEFORE propagation
             if visualization_placeholder:
@@ -832,7 +848,7 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
                     rect = plt.Rectangle((bbox_x_min, bbox_y_min), bbox_x_max-bbox_x_min, bbox_y_max-bbox_y_min, 
                                        fill=False, color='red', linewidth=2)
                     axes[0].add_patch(rect)
-                    axes[0].set_title(f'Central Frame {middle_slice_idx} + Box Prompt')
+                    axes[0].set_title(f'Frame 0: Central Thresholded {middle_slice_idx} + Box')
                     axes[0].axis('off')
                     
                     # Show just the bounding box region
@@ -850,9 +866,9 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
                     plt.tight_layout()
                     
                     with visualization_placeholder.container():
-                        st.write("**🤖 SAM2 Box Prompt Inference:**")
+                        st.write("**🤖 SAM2 Box Prompt on Frame 0 (Central Thresholded):**")
                         st.pyplot(fig)
-                        st.write(f"**Central Frame:** {middle_slice_idx} | **Box:** {bbox} | **Threshold:** {threshold_value:.3f}")
+                        st.write(f"**Frame 0:** Central thresholded {middle_slice_idx} | **Box:** {bbox} | **Threshold:** {threshold_value:.3f}")
                     
                     plt.close()
                     
@@ -985,22 +1001,24 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
             # Update propagation container with results
             with propagation_container:
                 st.markdown("### ✅ **SAM2 Propagation Complete**")
-                st.success(f"Successfully propagated masks to {len(video_segments)} frames")
+                st.success(f"Successfully propagated from frame 0 (central) to {len(video_segments)-1} ROI frames")
                 
                 # Show frame distribution
                 frame_ids = sorted(video_segments.keys())
                 if len(frame_ids) > 0:
-                    st.write(f"**Frames processed:** {frame_ids[0]} → {frame_ids[-1]} (Total: {len(frame_ids)})")
+                    st.write(f"**Propagation sequence:** Frame 0 (central thresholded) → Frames 1-{frame_ids[-1]} (ROI slices)")
+                    st.info(f"**Result:** {len(roi_slices)} segmented ROI slices (frame 0 excluded from final output)")
                     
-                    # Count non-empty masks
+                    # Count non-empty masks (excluding frame 0)
+                    roi_frames = [f for f in frame_ids if f > 0]  # Skip frame 0
                     non_empty_masks = 0
-                    for frame_id in frame_ids:
+                    for frame_id in roi_frames:
                         if 1 in video_segments[frame_id]:
                             mask = video_segments[frame_id][1]
                             if np.sum(mask) > 0:
                                 non_empty_masks += 1
                     
-                    st.info(f"📈 **Active masks:** {non_empty_masks}/{len(frame_ids)} frames contain segmented regions")
+                    st.info(f"📈 **Active ROI masks:** {non_empty_masks}/{len(roi_frames)} ROI frames contain segmented regions")
             
             # Show propagation results visualization
             if visualization_placeholder and len(video_segments) > 0:
@@ -1032,39 +1050,42 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
                 except Exception as viz_error:
                     print(f"Results visualization error: {viz_error}")
             
-            # Convert results back to full image space (traditional approach)
+            # Convert results back to full image space (only roi_slices, not central thresholded)
             current_step += 1
-            update_status("Converting results back to full image space...")
+            update_status("Converting SAM2 results to original slice space...")
             update_progress(current_step, total_steps, "Converting results")
             
             output_masks = []
             x_min, y_min, x_max, y_max = roi_bounds
             
-            # Process each slice like traditional mode
-            for slice_idx in range(nii_data.shape[0]):  # First dimension is number of slices
+            print(f"Processing {len(roi_slices)} original slices (ignoring frame 0 - central thresholded)")
+            
+            # Process each ROI slice (frames 1, 2, 3... N correspond to roi_slices 0, 1, 2... N-1)
+            for roi_slice_idx in range(len(roi_slices)):
                 # Create full-size mask for this slice
                 full_mask = np.zeros((nii_data.shape[1], nii_data.shape[2]), dtype=np.uint8)  # (height, width)
                 
-                # Check if we have a propagated mask for this slice
-                if slice_idx in video_segments and 1 in video_segments[slice_idx]:
-                    prop_mask = video_segments[slice_idx][1]  # Object ID 1
+                # Map to SAM2 frame index: roi_slice_idx 0 → frame 1, roi_slice_idx 1 → frame 2, etc.
+                sam2_frame_idx = roi_slice_idx + 1  # Skip frame 0 (central thresholded)
+                
+                # Check if we have a propagated mask for this frame
+                if sam2_frame_idx in video_segments and 1 in video_segments[sam2_frame_idx]:
+                    prop_mask = video_segments[sam2_frame_idx][1]  # Object ID 1
                     
                     # Debug: Check propagated mask dimensions
-                    print(f"Slice {slice_idx}: propagated mask shape: {prop_mask.shape}")
+                    print(f"ROI slice {roi_slice_idx} (SAM2 frame {sam2_frame_idx}): mask shape: {prop_mask.shape}")
                     
                     # Ensure propagated mask is the right size for ROI
                     roi_h = y_max - y_min
                     roi_w = x_max - x_min
                     
-                    print(f"ROI dimensions: {roi_w}x{roi_h}, mask dimensions: {prop_mask.shape}")
-                    
                     # Validate dimensions before resize
                     if roi_h <= 0 or roi_w <= 0:
-                        print(f"Invalid ROI dimensions for slice {slice_idx}: {roi_w}x{roi_h}")
+                        print(f"Invalid ROI dimensions for slice {roi_slice_idx}: {roi_w}x{roi_h}")
                         continue
                     
                     if prop_mask.shape[0] <= 0 or prop_mask.shape[1] <= 0:
-                        print(f"Invalid mask dimensions for slice {slice_idx}: {prop_mask.shape}")
+                        print(f"Invalid mask dimensions for slice {roi_slice_idx}: {prop_mask.shape}")
                         continue
                     
                     # Only resize if dimensions don't match
@@ -1073,12 +1094,14 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
                             prop_mask = cv2.resize(prop_mask.astype(np.uint8), (roi_w, roi_h), interpolation=cv2.INTER_NEAREST)
                             print(f"Resized mask from {prop_mask.shape} to {roi_h}x{roi_w}")
                         except Exception as resize_error:
-                            print(f"Resize failed for slice {slice_idx}: {resize_error}")
+                            print(f"Resize failed for slice {roi_slice_idx}: {resize_error}")
                             continue
                     
                     # Map back to full image
                     full_mask[y_min:y_max, x_min:x_max] = (prop_mask > 0.5).astype(np.uint8)
-                    print(f"Mapped mask to full image for slice {slice_idx}")
+                    print(f"✅ Mapped SAM2 mask to full image for ROI slice {roi_slice_idx}")
+                else:
+                    print(f"❌ No propagated mask found for ROI slice {roi_slice_idx} (SAM2 frame {sam2_frame_idx})")
                 
                 output_masks.append(full_mask)
             
@@ -1086,7 +1109,7 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
             # Clean up temporary directory
             cleanup_temp_folder(temp_video_dir)
         
-        # Save results EXACTLY like batch_process_step
+        # Save results EXACTLY like batch_process_step with sam_mask folder
         current_step += 1
         update_status("Saving results in same format as process_step...")
         update_progress(current_step, total_steps, "Saving results")
@@ -1094,7 +1117,7 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         # Create save directory structure EXACTLY like batch_process_step  
         filename_no_ext = os.path.splitext(os.path.basename(nifti_path))[0]
         output_path = os.path.join(output_dir, filename_no_ext)
-        save_dir = os.path.join(output_path, 'sam_dense_mask')  # Use sam_dense_mask to differentiate from process_step
+        save_dir = os.path.join(output_path, 'sam_mask')  # Use sam_mask to match batch_process_step naming
         
         # Create debug images directory
         debug_images_dir = os.path.join(output_path, 'sam_images')
@@ -1111,29 +1134,30 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         print(f"Saving debug images to: {debug_images_dir}")
         
         # Save debug images first
-        # 1. Save central thresholded slice
+        # 1. Save central thresholded slice (frame 0)
         central_roi = thresholded_middle[y_min:y_max, x_min:x_max]
         central_debug = (central_roi * 255).astype(np.uint8)
         Image.fromarray(central_debug, mode='L').save(
             os.path.join(debug_images_dir, f'central_slice_{middle_slice_idx}_thresholded.png')
         )
         
-        # 2. Save ROI slices used in processing
-        for slice_idx, roi_slice in enumerate(roi_slices):
+        # 2. Save original ROI slices used in processing (frames 1+)
+        for roi_idx, roi_slice in enumerate(roi_slices):
             # Normalize ROI slice for visualization
             roi_norm = ((roi_slice - np.min(roi_slice)) / (np.max(roi_slice) - np.min(roi_slice) + 1e-8) * 255).astype(np.uint8)
             Image.fromarray(roi_norm, mode='L').save(
-                os.path.join(debug_images_dir, f'roi_slice_{slice_idx}.png')
+                os.path.join(debug_images_dir, f'roi_slice_{roi_idx}.png')
             )
         
-        # 3. Save propagated masks if available
+        # 3. Save propagated masks if available (only for frames 1+, not frame 0)
         if video_segments:
-            for frame_idx in sorted(video_segments.keys()):
-                if 1 in video_segments[frame_idx]:
-                    mask = video_segments[frame_idx][1]
+            for roi_idx in range(len(roi_slices)):
+                sam2_frame_idx = roi_idx + 1  # Skip frame 0
+                if sam2_frame_idx in video_segments and 1 in video_segments[sam2_frame_idx]:
+                    mask = video_segments[sam2_frame_idx][1]
                     mask_img = (mask * 255).astype(np.uint8)
                     Image.fromarray(mask_img, mode='L').save(
-                        os.path.join(debug_images_dir, f'sam2_mask_frame_{frame_idx}.png')
+                        os.path.join(debug_images_dir, f'sam2_mask_roi_{roi_idx}.png')
                     )
         
         print(f"✅ Saved debug images to {debug_images_dir}")
