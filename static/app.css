@@ -1,0 +1,61 @@
+/* Main header styling */
+.main-header {
+    text-align: center;
+    padding: 1rem 0;
+    color: #2c3e50;
+    font-size: 2rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+/* Feature card styling */
+.feature-card {
+    background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+    padding: 1rem;
+    border-radius: 8px;
+    border-left: 3px solid #00b894;
+    margin: 0.5rem 0;
+    box-shadow: 0 2px 8px rgba(168, 237, 234, 0.3);
+}
+
+.feature-card h3, .feature-card h4 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1.1rem;
+    color: #2d3436;
+}
+
+.feature-card p {
+    margin: 0;
+    font-size: 0.9rem;
+    color: #2d3436;
+}
+
+.description {
+    text-align: center;
+    color: #6c757d;
+    font-size: 1rem;
+    margin: 0.5rem 0 1rem 0;
+}
+
+.compact-section {
+    margin: 0.5rem 0;
+}
+
+/* Sidebar navigation */
+.nav-header {
+    background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+    color: #2d3436;
+    padding: 0.5rem;
+    border-radius: 6px;
+    text-align: center;
+    margin-bottom: 1rem;
+    font-weight: 600;
+}
+.current-step {
+    background: #f8f9fa;
+    color: #495057;
+    padding: 0.5rem;
+    border-radius: 6px;
+    border-left: 3px solid #00b894;
+    margin: 0.5rem 0;
+}

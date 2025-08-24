@@ -1,0 +1,65 @@
+.step-container {
+        background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+        color: #2d3436;
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 8px rgba(168, 237, 234, 0.3);
+        border-left: 3px solid #00b894;
+    }
+    .step-container h3 {
+        margin: 0 0 0.5rem 0;
+        font-size: 1.2rem;
+        color: #2d3436;
+    }
+    .step-container p {
+        margin: 0;
+        font-size: 0.9rem;
+        color: #2d3436;
+    }
+    .progress-section {
+        background: #ffffff;
+        padding: 1rem;
+        border-radius: 8px;
+        border: 1px solid #e9ecef;
+        margin: 0.5rem 0;
+        box-shadow: 0 1px 5px rgba(0,0,0,0.05);
+    }
+    .progress-section h3 {
+        margin: 0 0 0.5rem 0;
+        font-size: 1.1rem;
+    }
+    .current-file {
+        background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+        color: #2d3436;
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 8px rgba(168, 237, 234, 0.3);
+        border-left: 3px solid #00b894;
+    }
+    .current-file h4 {
+        margin: 0 0 0.3rem 0;
+        font-size: 1.1rem;
+        color: #2d3436;
+    }
+    .current-file p {
+        margin: 0;
+        font-size: 0.9rem;
+        color: #2d3436;
+    }
+    .canvas-container {
+        background: #ffffff;
+        padding: 1rem;
+        border-radius: 8px;
+        border: 1px solid #f0f0f0;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    }
+    .canvas-container h3 {
+        margin: 0 0 0.5rem 0;
+        font-size: 1.1rem;
+    }
+    .compact-section {
+        margin: 0.5rem 0;
+    }

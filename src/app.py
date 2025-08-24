@@ -13,51 +13,9 @@ def main():
         initial_sidebar_state="expanded"
     )
     
-    # Custom CSS for clean styling
-    st.markdown("""
-    <style>
-    .main-header {
-        text-align: center;
-        padding: 1rem 0;
-        color: #2c3e50;
-        font-size: 2rem;
-        font-weight: 600;
-        margin-bottom: 0.5rem;
-    }
-    
-    .feature-card {
-        background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
-        padding: 1rem;
-        border-radius: 8px;
-        border-left: 3px solid #00b894;
-        margin: 0.5rem 0;
-        box-shadow: 0 2px 8px rgba(168, 237, 234, 0.3);
-    }
-    
-    .feature-card h3 {
-        margin: 0 0 0.5rem 0;
-        font-size: 1.1rem;
-        color: #2d3436;
-    }
-    
-    .feature-card p {
-        margin: 0;
-        font-size: 0.9rem;
-        color: #2d3436;
-    }
-    
-    .description {
-        text-align: center;
-        color: #6c757d;
-        font-size: 1rem;
-        margin: 0.5rem 0 1rem 0;
-    }
-    
-    .compact-section {
-        margin: 0.5rem 0;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+    # Load external CSS for styling
+    with open("static/app.css") as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
     
     # Main title with custom styling
     st.markdown('<h1 class="main-header">Density Segmentation GUI</h1>', unsafe_allow_html=True)
@@ -65,16 +23,16 @@ def main():
     if "current_step" not in st.session_state:
         st.session_state["current_step"] = "mode_selection"
     
-    # Mode selection
+    # Mode selection step
     if st.session_state["current_step"] == "mode_selection":
-        # Welcome section
+    # Welcome section
         st.markdown("""
         <div class="description">
             Interactive medical image segmentation for NIfTI and DICOM files
         </div>
         """, unsafe_allow_html=True)
         
-        # Main content
+    # Main content
         col1, col2, col3 = st.columns([1, 2, 1])
         
         with col2:
@@ -115,29 +73,8 @@ def main():
     elif st.session_state["current_step"] == "batch_process":
         batch_process_step()
     
-    # Prettier navigation sidebar
+    # Sidebar navigation
     with st.sidebar:
-        st.markdown("""
-        <style>
-        .nav-header {
-            background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
-            color: #2d3436;
-            padding: 0.5rem;
-            border-radius: 6px;
-            text-align: center;
-            margin-bottom: 1rem;
-            font-weight: 600;
-        }
-        .current-step {
-            background: #f8f9fa;
-            color: #495057;
-            padding: 0.5rem;
-            border-radius: 6px;
-            border-left: 3px solid #00b894;
-            margin: 0.5rem 0;
-        }
-        </style>
-        """, unsafe_allow_html=True)
         
         st.markdown('<div class="nav-header">Navigation</div>', unsafe_allow_html=True)
         
@@ -156,7 +93,7 @@ def main():
             st.session_state["current_step"] = "mode_selection"
             st.rerun()
         
-        # Show current step with prettier styling
+        # Show current step 
         current_step = st.session_state.get("current_step", "mode_selection")
         if current_step == "file_selection":
             step_text = "📂 File Selection"
