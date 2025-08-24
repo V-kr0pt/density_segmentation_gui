@@ -740,6 +740,19 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         roi_slices = all_original_roi_slices  # Keep original for reference
         thresholded_roi_slices = all_thresholded_roi_slices  # All thresholded slices
         
+        # Create roi_masks for compatibility with visualization functions
+        roi_masks = []
+        for slice_idx in range(num_slices):
+            if mask_data is not None:
+                slice_mask = mask_data[slice_idx, :, :]
+                roi_mask = slice_mask[y_min:y_max, x_min:x_max]
+            else:
+                # Create a full mask if no mask data
+                roi_mask = np.ones((y_max - y_min, x_max - x_min), dtype=np.float32)
+            roi_masks.append(roi_mask)
+        
+        print(f"Created {len(roi_masks)} ROI masks for visualization compatibility")
+        
         # Show ROI visualization
         if visualization_placeholder:
             try:
@@ -754,62 +767,6 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         
         # Process slices for SAM2
         processed_slices = []
-        
-        # Show threshold visualization for first slice
-        if visualization_placeholder and len(roi_slices) > 0 and len(roi_masks) > 0:
-            try:
-                import matplotlib.pyplot as plt
-                
-                first_slice = roi_slices[0]
-                first_mask = roi_masks[0]
-                threshold_value = threshold_data.get('threshold', 0.5)  # Changed from 'upper_threshold' to 'threshold'
-                
-                # Create threshold visualization
-                fig, axes = plt.subplots(1, 4, figsize=(20, 5))
-                
-                # Original ROI slice
-                roi_norm = (first_slice - np.min(first_slice)) / (np.max(first_slice) - np.min(first_slice) + 1e-8)
-                axes[0].imshow(roi_norm, cmap='gray')
-                axes[0].set_title('Original ROI Slice')
-                axes[0].axis('off')
-                
-                # Mask overlay
-                axes[1].imshow(roi_norm, cmap='gray')
-                mask_overlay = np.ma.masked_where(first_mask == 0, first_mask)
-                axes[1].imshow(mask_overlay, cmap='jet', alpha=0.6)
-                axes[1].set_title('ROI with Mask')
-                axes[1].axis('off')
-                
-                # Apply threshold visualization
-                if isinstance(threshold_value, (int, float)):
-                    thresholded_preview = apply_safe_threshold(first_slice, first_mask, threshold_value)
-                    axes[2].imshow(thresholded_preview, cmap='gray')
-                    axes[2].set_title(f'Thresholded (T={threshold_value:.2f})')
-                else:
-                    normalized_preview = safe_normalize_for_sam2(first_slice)
-                    axes[2].imshow(normalized_preview, cmap='gray')
-                    axes[2].set_title('Normalized')
-                axes[2].axis('off')
-                
-                # Create preview of what will be processed
-                if isinstance(threshold_value, (int, float)):
-                    preview_processed = apply_safe_threshold(first_slice, first_mask, threshold_value)
-                else:
-                    preview_processed = safe_normalize_for_sam2(first_slice)
-                
-                axes[3].imshow(preview_processed, cmap='gray')
-                axes[3].set_title('Will be Processed')
-                axes[3].axis('off')
-                
-                plt.tight_layout()
-                
-                # Update visualization before processing
-                with visualization_placeholder.container():
-                    st.pyplot(fig)
-                    st.write(f"**Threshold Settings:** Upper = {threshold_value}")
-                
-            except Exception as viz_error:
-                print(f"Threshold visualization error: {viz_error}")
         
         # Convert to format suitable for SAM2 video predictor using JPEG folder approach
         current_step += 1
