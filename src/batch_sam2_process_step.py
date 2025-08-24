@@ -765,8 +765,8 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         print(f"ROI bounds: {roi_bounds}")
         print(f"Number of ROI slices: {len(roi_slices)}")
         
-        # Process slices for SAM2
-        processed_slices = []
+        # processed_slices is already created and populated above
+        print(f"✅ Ready to create JPEG folder with {len(processed_slices)} processed slices")
         
         # Convert to format suitable for SAM2 video predictor using JPEG folder approach
         current_step += 1
