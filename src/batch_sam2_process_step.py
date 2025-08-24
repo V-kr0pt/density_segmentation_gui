@@ -167,53 +167,87 @@ def create_temp_jpeg_folder(processed_slices, temp_dir_base="temp_sam2_frames"):
         import shutil
         from PIL import Image
         
+        # Validate input
+        if not processed_slices:
+            print("Error: No processed slices provided")
+            return None, None, False
+        
+        print(f"Creating JPEG folder for {len(processed_slices)} slices...")
+        
+        # Validate slice data
+        for i, slice_data in enumerate(processed_slices):
+            if slice_data is None:
+                print(f"Error: Slice {i} is None")
+                return None, None, False
+            if not isinstance(slice_data, np.ndarray):
+                print(f"Error: Slice {i} is not a numpy array, got {type(slice_data)}")
+                return None, None, False
+            if slice_data.size == 0:
+                print(f"Error: Slice {i} is empty")
+                return None, None, False
+            print(f"Slice {i}: shape={slice_data.shape}, dtype={slice_data.dtype}, range=[{np.min(slice_data):.3f}, {np.max(slice_data):.3f}]")
+        
         # Create temporary directory
         temp_dir = tempfile.mkdtemp(prefix=temp_dir_base)
         frame_names = []
         
+        print(f"Created temporary directory: {temp_dir}")
+        
         for i, slice_data in enumerate(processed_slices):
-            # Ensure slice is 2D
-            if len(slice_data.shape) == 3:
-                slice_data = slice_data[:, :, 0]  # Take first channel
-            
-            # Normalize to 0-255 range for JPEG
-            if slice_data.dtype != np.uint8:
-                slice_min = np.min(slice_data)
-                slice_max = np.max(slice_data)
-                if slice_max > slice_min:
-                    slice_normalized = ((slice_data - slice_min) / (slice_max - slice_min) * 255).astype(np.uint8)
+            try:
+                # Ensure slice is 2D
+                if len(slice_data.shape) == 3:
+                    print(f"Converting slice {i} from 3D to 2D (taking first channel)")
+                    slice_data = slice_data[:, :, 0]  # Take first channel
+                elif len(slice_data.shape) != 2:
+                    print(f"Error: Slice {i} has invalid shape {slice_data.shape}")
+                    continue
+                
+                # Normalize to 0-255 range for JPEG
+                if slice_data.dtype != np.uint8:
+                    slice_min = np.min(slice_data)
+                    slice_max = np.max(slice_data)
+                    print(f"Slice {i}: normalizing from [{slice_min:.3f}, {slice_max:.3f}] to [0, 255]")
+                    
+                    if slice_max > slice_min:
+                        slice_normalized = ((slice_data - slice_min) / (slice_max - slice_min) * 255).astype(np.uint8)
+                    else:
+                        print(f"Warning: Slice {i} has uniform values, creating zeros")
+                        slice_normalized = np.zeros_like(slice_data, dtype=np.uint8)
                 else:
-                    slice_normalized = np.zeros_like(slice_data, dtype=np.uint8)
-            else:
-                slice_normalized = slice_data
-            
-            # Convert to RGB for SAM2 (SAM2 expects 3-channel images)
-            slice_rgb = np.stack([slice_normalized] * 3, axis=-1)
-            
-            # Create filename with zero-padding for proper sorting
-            frame_filename = f"{i:05d}.jpg"  # e.g., "00000.jpg", "00001.jpg"
-            frame_path = os.path.join(temp_dir, frame_filename)
-            
-            # Save as JPEG
-            pil_image = Image.fromarray(slice_rgb)
-            pil_image.save(frame_path, "JPEG", quality=95)
-            
-            frame_names.append(frame_filename)
+                    slice_normalized = slice_data
+                
+                # Convert to RGB for SAM2 (SAM2 expects 3-channel images)
+                slice_rgb = np.stack([slice_normalized] * 3, axis=-1)
+                
+                # Create filename with zero-padding for proper sorting
+                frame_filename = f"{i:05d}.jpg"  # e.g., "00000.jpg", "00001.jpg"
+                frame_path = os.path.join(temp_dir, frame_filename)
+                
+                # Save as JPEG
+                pil_image = Image.fromarray(slice_rgb)
+                pil_image.save(frame_path, "JPEG", quality=95)
+                
+                frame_names.append(frame_filename)
+                print(f"✅ Saved frame {i}: {frame_filename}")
+                
+            except Exception as slice_error:
+                print(f"Error processing slice {i}: {slice_error}")
+                continue
         
-        print(f"Created temporary JPEG folder: {temp_dir}")
-        print(f"Generated {len(frame_names)} frame files")
+        if not frame_names:
+            print("Error: No frames were successfully created")
+            return None, None, False
         
-        # Show sample frames for visualization
-        if len(processed_slices) > 0:
-            print(f"Sample frame info:")
-            print(f"  First frame shape: {processed_slices[0].shape}")
-            print(f"  First frame data type: {processed_slices[0].dtype}")
-            print(f"  First frame value range: [{np.min(processed_slices[0]):.2f}, {np.max(processed_slices[0]):.2f}]")
+        print(f"✅ Created temporary JPEG folder: {temp_dir}")
+        print(f"✅ Generated {len(frame_names)} frame files")
         
         return temp_dir, frame_names, True
         
     except Exception as e:
-        print(f"Error creating temporary JPEG folder: {e}")
+        print(f"❌ Error creating temporary JPEG folder: {e}")
+        import traceback
+        print(f"Full traceback: {traceback.format_exc()}")
         return None, None, False
 
 def create_sam2_progress_visualization(roi_slices, roi_masks, roi_bounds, middle_slice_idx=None):
@@ -786,28 +820,57 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         # Create JPEG folder with the complete thresholded sequence
         temp_video_dir, frame_names, jpeg_success = create_temp_jpeg_folder(video_sequence)
         
-        if not jpeg_success:
-            update_status("Failed to create temporary JPEG folder", "error")
-            return False, "Failed to create temporary JPEG folder for SAM2", None
+        if not jpeg_success or temp_video_dir is None:
+            error_msg = "Failed to create temporary JPEG folder for SAM2"
+            print(f"❌ {error_msg}")
+            print(f"Video sequence info:")
+            print(f"  Length: {len(video_sequence) if video_sequence else 'None'}")
+            if video_sequence:
+                print(f"  Central slice shape: {video_sequence[0].shape if len(video_sequence) > 0 else 'None'}")
+                print(f"  ROI slices count: {len(video_sequence) - 1}")
+            update_status(error_msg, "error")
+            return False, error_msg, None
         
         update_status(f"Created {len(frame_names)} JPEG frames successfully")
+        print(f"✅ JPEG creation successful: {temp_video_dir}")
+        
+        # Show frame sequence visualization
+        if visualization_placeholder:
+            frame_container = visualization_placeholder.container()
+            with frame_container:
+                st.markdown("### 📹 **SAM2 Video Sequence**")
+                st.success(f"**Frame 0:** Central thresholded slice {middle_slice_idx}")
+                st.success(f"**Frames 1-{len(roi_slices_thresholded)}:** Thresholded ROI slices")
+                st.info(f"**Total frames for propagation:** {len(frame_names)}")
+        
+        def cleanup_temp_folder(folder_path):
+            """Clean up temporary folder"""
+            try:
+                if os.path.exists(folder_path):
+                    shutil.rmtree(folder_path)
+                    print(f"Cleaned up temporary folder: {folder_path}")
+            except Exception as e:
+                print(f"Warning: Could not clean up {folder_path}: {e}")
         
         # Show sample frame visualization
-        if visualization_placeholder and len(processed_slices) > 0:
+        if visualization_placeholder and len(video_sequence) > 0:
             try:
                 import matplotlib.pyplot as plt
                 
                 # Show first few frames as samples
-                num_samples = min(4, len(processed_slices))
+                num_samples = min(4, len(video_sequence))
                 fig, axes = plt.subplots(1, num_samples, figsize=(15, 4))
                 
                 if num_samples == 1:
                     axes = [axes]
                 
                 for i in range(num_samples):
-                    slice_data = processed_slices[i]
+                    slice_data = video_sequence[i]
                     axes[i].imshow(slice_data, cmap='gray')
-                    axes[i].set_title(f'Frame {i:05d}.jpg')
+                    if i == 0:
+                        axes[i].set_title(f'Frame {i:05d}.jpg\n(Central Thresholded)')
+                    else:
+                        axes[i].set_title(f'Frame {i:05d}.jpg\n(ROI {i-1} Thresholded)')
                     axes[i].axis('off')
                 
                 plt.suptitle(f'Sample JPEG Frames (Total: {len(frame_names)})')
