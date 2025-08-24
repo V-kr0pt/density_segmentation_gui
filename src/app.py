@@ -2,7 +2,7 @@ from file_selection_step import file_selection_step
 from batch_draw_step import batch_draw_step
 from batch_threshold_step import batch_threshold_step
 from batch_process_step import batch_process_step
-from batch_sam2_process_step import batch_sam2_process_step
+from batch_sam2_process_step import process_sam2_video_segmentation
 import streamlit as st
 
 # ================== Main App ==================
@@ -152,7 +152,7 @@ def main():
         # Route to appropriate processing mode
         processing_mode = st.session_state.get("processing_mode", "traditional")
         if processing_mode == "sam2":
-            batch_sam2_process_step()
+            process_sam2_video_segmentation()
         else:
             batch_process_step()
     

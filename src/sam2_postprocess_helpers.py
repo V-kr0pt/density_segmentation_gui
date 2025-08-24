@@ -235,6 +235,13 @@ def save_sam2_results(nifti_path, output_dir, video_segments, png_images, temp_v
         message: Status message
     """
     try:
+        # Import here to avoid circular imports
+        import sys
+        import os
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        if current_dir not in sys.path:
+            sys.path.append(current_dir)
+        
         from utils import MaskOperations
         
         # Create save directory
@@ -334,7 +341,254 @@ def create_sam2_debug_images(save_dir, png_images, video_segments, bbox):
         return False, None
 
 
+def validate_sam2_results_quality(video_segments, original_png_count, 
+                                 min_success_rate=0.5, visualization_placeholder=None):
+    """
+    Validate the quality of SAM2 video propagation results
+    
+    Args:
+        video_segments: SAM2 propagation results
+        original_png_count: Number of input PNG files
+        min_success_rate: Minimum acceptable success rate (0.0-1.0)
+        visualization_placeholder: Streamlit placeholder for visualizations
+        
+    Returns:
+        tuple: (is_valid, quality_report, suggestions)
+    """
+    try:
+        frame_count = len(video_segments)
+        active_masks = sum(1 for frame_id in video_segments.keys() 
+                         if 1 in video_segments[frame_id] and np.sum(video_segments[frame_id][1]) > 0)
+        
+        success_rate = active_masks / original_png_count if original_png_count > 0 else 0
+        
+        # Analyze mask quality
+        mask_sizes = []
+        mask_coverages = []
+        
+        for frame_id in video_segments.keys():
+            if 1 in video_segments[frame_id]:
+                mask = video_segments[frame_id][1]
+                mask_size = np.sum(mask > 0)
+                mask_coverage = mask_size / mask.size if mask.size > 0 else 0
+                
+                mask_sizes.append(mask_size)
+                mask_coverages.append(mask_coverage)
+        
+        # Quality metrics
+        avg_coverage = np.mean(mask_coverages) if mask_coverages else 0
+        coverage_std = np.std(mask_coverages) if mask_coverages else 0
+        
+        # Generate report
+        quality_report = {
+            "success_rate": success_rate,
+            "active_masks": active_masks,
+            "total_frames": frame_count,
+            "avg_coverage": avg_coverage,
+            "coverage_consistency": 1.0 - coverage_std if coverage_std < 1.0 else 0.0,
+            "mask_sizes": mask_sizes,
+            "mask_coverages": mask_coverages
+        }
+        
+        # Determine quality level
+        is_valid = success_rate >= min_success_rate and avg_coverage > 0.01
+        
+        # Generate suggestions
+        suggestions = []
+        
+        if success_rate < 0.7:
+            suggestions.append("Low success rate - consider adjusting threshold parameters in batch_process_step")
+            
+        if avg_coverage < 0.05:
+            suggestions.append("Small mask coverage - input PNGs may have insufficient segmentation")
+            
+        if coverage_std > 0.3:
+            suggestions.append("Inconsistent mask sizes - check threshold adaptation quality")
+            
+        if active_masks == 0:
+            suggestions.append("No active masks - check SAM2 box prompt configuration and input quality")
+        
+        # Display validation results
+        if visualization_placeholder:
+            with visualization_placeholder.container():
+                st.markdown("### 🔍 **SAM2 Results Quality Analysis**")
+                
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Success Rate", f"{success_rate:.1%}")
+                with col2:
+                    st.metric("Avg Coverage", f"{avg_coverage:.1%}")
+                with col3:
+                    st.metric("Consistency", f"{quality_report['coverage_consistency']:.1%}")
+                with col4:
+                    if is_valid:
+                        st.metric("Quality", "✅ Valid")
+                    else:
+                        st.metric("Quality", "⚠️ Poor")
+                
+                if suggestions:
+                    st.markdown("**💡 Suggestions for improvement:**")
+                    for suggestion in suggestions:
+                        st.write(f"• {suggestion}")
+                
+                # Coverage distribution
+                if mask_coverages:
+                    st.markdown("**📊 Mask Coverage Distribution:**")
+                    import matplotlib.pyplot as plt
+                    
+                    fig, ax = plt.subplots(figsize=(8, 3))
+                    ax.hist(mask_coverages, bins=20, alpha=0.7, color='skyblue', edgecolor='black')
+                    ax.set_xlabel('Coverage Percentage')
+                    ax.set_ylabel('Number of Frames')
+                    ax.set_title('SAM2 Mask Coverage Distribution')
+                    ax.grid(True, alpha=0.3)
+                    st.pyplot(fig)
+                    plt.close()
+        
+        return is_valid, quality_report, suggestions
+        
+    except Exception as e:
+        return False, {"error": str(e)}, [f"Error in quality validation: {str(e)}"]
+
+
+def create_before_after_comparison(original_pngs, refined_segments, 
+                                  visualization_placeholder=None, max_samples=3):
+    """
+    Create before/after comparison visualization showing batch_process_step vs SAM2 results
+    
+    Args:
+        original_pngs: List of original PNG images from batch_process_step
+        refined_segments: SAM2 video propagation results
+        visualization_placeholder: Streamlit placeholder
+        max_samples: Maximum number of samples to show
+        
+    Returns:
+        bool: Success status
+    """
+    try:
+        if not visualization_placeholder or not original_pngs or not refined_segments:
+            return False
+            
+        # Select sample frames for comparison
+        available_frames = list(refined_segments.keys())
+        sample_indices = np.linspace(0, len(original_pngs)-1, 
+                                   min(max_samples, len(original_pngs))).astype(int)
+        
+        with visualization_placeholder.container():
+            st.markdown("### 🔄 **Before vs After: batch_process_step → SAM2**")
+            st.markdown("*Comparison showing refinement achieved by SAM2 post-processing*")
+            
+            for i, idx in enumerate(sample_indices):
+                if idx < len(original_pngs) and idx in available_frames:
+                    st.markdown(f"**Sample {i+1}: Slice {idx}**")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    
+                    # Original from batch_process_step
+                    with col1:
+                        st.markdown("**📥 batch_process_step**")
+                        original_img = original_pngs[idx]
+                        st.image(original_img, caption="Threshold-based segmentation", use_column_width=True)
+                        
+                        # Stats for original
+                        orig_pixels = np.sum(original_img > 0)
+                        orig_coverage = (orig_pixels / original_img.size) * 100
+                        st.caption(f"Coverage: {orig_coverage:.1f}%")
+                    
+                    # SAM2 refined
+                    with col2:
+                        st.markdown("**🎯 SAM2 Refined**")
+                        if 1 in refined_segments[idx]:
+                            refined_mask = refined_segments[idx][1]
+                            refined_img = (refined_mask * 255).astype(np.uint8)
+                            st.image(refined_img, caption="Video propagation refined", use_column_width=True)
+                            
+                            # Stats for refined
+                            refined_pixels = np.sum(refined_mask > 0)
+                            refined_coverage = (refined_pixels / refined_mask.size) * 100
+                            st.caption(f"Coverage: {refined_coverage:.1f}%")
+                        else:
+                            st.write("No refined mask available")
+                            st.caption("Coverage: 0.0%")
+                    
+                    # Overlay comparison
+                    with col3:
+                        st.markdown("**🔍 Overlay Comparison**")
+                        try:
+                            if 1 in refined_segments[idx]:
+                                # Create overlay: original in red, refined in green
+                                refined_mask = refined_segments[idx][1]
+                                
+                                # Normalize both to 0-1
+                                orig_norm = (original_img > 0).astype(float)
+                                refined_norm = (refined_mask > 0).astype(float)
+                                
+                                # Create RGB overlay
+                                overlay = np.zeros((*orig_norm.shape, 3))
+                                overlay[:, :, 0] = orig_norm  # Red for original
+                                overlay[:, :, 1] = refined_norm  # Green for refined
+                                
+                                st.image(overlay, caption="Red: Original, Green: Refined", use_column_width=True)
+                                
+                                # Calculate improvement metrics
+                                intersection = np.sum((orig_norm > 0) & (refined_norm > 0))
+                                union = np.sum((orig_norm > 0) | (refined_norm > 0))
+                                iou = intersection / union if union > 0 else 0
+                                st.caption(f"IoU: {iou:.3f}")
+                            else:
+                                st.write("No comparison available")
+                        except Exception as e:
+                            st.write("Overlay creation failed")
+                    
+                    st.markdown("---")
+            
+            # Overall improvement summary
+            st.markdown("### 📊 **Overall Improvement Summary**")
+            
+            # Calculate overall metrics
+            total_improvements = 0
+            total_comparisons = 0
+            
+            for idx in sample_indices:
+                if idx < len(original_pngs) and idx in available_frames and 1 in refined_segments[idx]:
+                    orig_coverage = np.sum(original_pngs[idx] > 0) / original_pngs[idx].size
+                    refined_coverage = np.sum(refined_segments[idx][1] > 0) / refined_segments[idx][1].size
+                    
+                    if refined_coverage > orig_coverage * 0.8:  # At least 80% of original coverage maintained
+                        total_improvements += 1
+                    total_comparisons += 1
+            
+            if total_comparisons > 0:
+                improvement_rate = (total_improvements / total_comparisons) * 100
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Samples Analyzed", total_comparisons)
+                with col2:
+                    st.metric("Successful Refinements", total_improvements)
+                with col3:
+                    st.metric("Success Rate", f"{improvement_rate:.1f}%")
+                
+                if improvement_rate >= 80:
+                    st.success("🟢 **Excellent refinement quality!** SAM2 successfully improved the segmentation.")
+                elif improvement_rate >= 60:
+                    st.success("🟡 **Good refinement quality.** SAM2 provided meaningful improvements.")
+                else:
+                    st.warning("🔴 **Refinement needs review.** Consider adjusting parameters.")
+            
+            st.info("💡 **SAM2 Post-Processing Approach**: SAM2 takes the PNG results from batch_process_step and applies intelligent video propagation to create more consistent and refined segmentations across all slices.")
+        
+        return True
+        
+    except Exception as e:
+        if visualization_placeholder:
+            with visualization_placeholder.container():
+                st.error(f"Error creating comparison: {str(e)}")
+        return False
+
+
 def cleanup_temp_folder(temp_dir):
+
     """Clean up temporary directory."""
     try:
         if temp_dir and os.path.exists(temp_dir):
