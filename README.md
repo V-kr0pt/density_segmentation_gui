@@ -1,150 +1,163 @@
+
 # Density Segmentation GUI
 
-A interactive web application for medical image segmentation, specifically designed for density-based segmentation of NIfTI (Neuroimaging Informatics Technology Initiative) files. This tool provides an  graphical interface for drawing masks, adjusting thresholds, and processing medical imaging data.
+**A beginner-friendly web application for density-based segmentation of medical images (NIfTI format).**
 
-## Features
+---
 
-- **Interactive Mask Drawing**: Draw custom masks directly on medical images using an intuitive canvas interface
-- **Threshold Adjustment**: Fine-tune segmentation parameters with real-time visual feedback
-- **Batch Processing**: Process multiple NIfTI files efficiently with automated workflows
-- **Visual Feedback**: Real-time preview of segmentation results across different slices
-- **Output Management**: Organized output structure with comprehensive metadata and visualization
+## Project Overview
 
-## System Requirements
+Density Segmentation GUI is a visual tool for segmenting medical images, designed for users with no coding experience. It guides you through selecting files, drawing segmentation masks, adjusting thresholds, and processing results—all through an interactive web interface.
 
-- **Python**: 3.10 or higher
-- **Operating System**: Windows, macOS, or Linux
-- **RAM**: Minimum 4GB (8GB recommended for large datasets)
-- **Storage**: Sufficient space for input NIfTI files and generated outputs
+**Key features:**
+- Step-by-step workflow for batch or single-file segmentation
+- Interactive mask drawing on image slices
+- Real-time threshold adjustment and preview
+- Batch processing and organized output
+- No coding required
 
-## Installation
+---
 
-### Prerequisites
+## Quick Start
 
-Ensure you have Python 3.10 or higher installed on your system. You can verify your Python version by running:
+### 1. Requirements
+- Python 3.10+
+- Windows, macOS, or Linux
+- At least 4GB RAM (8GB+ recommended for large datasets)
 
-```bash
-python --version
-```
 
-### Setting Up the Environment
+### 2. Installation
+Clone the repository and set up a virtual environment. The steps are slightly different for Windows and macOS/Linux:
 
-#### 1. Clone the Repository
-
+#### **For macOS/Linux:**
 ```bash
 git clone https://github.com/V-kr0pt/density_segmentation_gui.git
 cd density_segmentation_gui
-```
-
-#### 2. Create Virtual Environment
-
-**For Windows:**
-```cmd
-python -m venv venv
-venv\Scripts\activate
-```
-
-**For macOS/Linux:**
-```bash
 python -m venv venv
 source venv/bin/activate
-```
-
-#### 3. Install Dependencies
-
-```bash
 pip install -r requirements.txt
 ```
 
-## Usage
-
-### Starting the Application
-
-**For Windows:**
+#### **For Windows (Command Prompt):**
 ```cmd
-# Ensure virtual environment is activated
+git clone https://github.com/V-kr0pt/density_segmentation_gui.git
+cd density_segmentation_gui
+python -m venv venv
 venv\Scripts\activate
-streamlit run src/app.py
+pip install -r requirements.txt
 ```
 
-**For macOS/Linux:**
+#### **For Windows (PowerShell):**
+```powershell
+git clone https://github.com/V-kr0pt/density_segmentation_gui.git
+cd density_segmentation_gui
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+### 3. Launch the App
+
+After activating your virtual environment, start the application:
+
 ```bash
-# Ensure virtual environment is activated
-source venv/bin/activate
 streamlit run src/app.py
 ```
 
-The application will automatically open in your default web browser at `http://localhost:8501`.
+The app will open in your browser at [http://localhost:8501](http://localhost:8501).
 
-### Workflow
+---
 
-#### Step 1: Draw Mask
-1. Place your NIfTI files (`.nii` format) in the `media/` directory
-2. Select a file from the dropdown menu
-3. Use the interactive canvas to draw masks on your medical images
-4. Adjust drawing parameters as needed
-5. Save your mask to proceed to the next step
+## How It Works: The Workflow
 
-#### Step 2: Adjust Threshold
-1. Review the central slice of your original image and generated mask
-2. Use the threshold slider to fine-tune segmentation parameters
-3. Preview the thresholded result in real-time
-4. Save the optimized threshold settings
+The app guides you through four main steps:
 
-#### Step 3: Process
-1. Execute the complete segmentation pipeline
-2. Monitor processing progress
-3. Review generated outputs and visualizations
+1. **Select Files**
+	- Place your `.nii` files in the `media/` folder.
+	- Use the app to select one or more files for processing.
 
-### Input/Output Structure
+2. **Draw Masks**
+	- For each selected file, use the interactive canvas to draw regions of interest (masks) on image slices.
+	- Adjust drawing parameters (brush size, color, etc.) as needed.
+	- Save your mask to continue.
 
-#### Input Directory
+3. **Adjust Thresholds**
+	- Fine-tune segmentation by adjusting a threshold slider.
+	- Instantly preview how the threshold affects the mask.
+	- Save the optimal threshold for each file.
+
+4. **Process & Export**
+	- Run the segmentation pipeline for all selected files.
+	- The app generates output masks, metadata, and visualizations in the `output/` folder.
+
+---
+
+## Input & Output Structure
+
+**Input:**
 ```
 media/
-├── sample_scan_1.nii
-├── sample_scan_2.nii
+├── scan1.nii
+├── scan2.nii
 └── ...
 ```
 
-#### Output Directory
+**Output:**
 ```
 output/
-├── scan_name/
-│   ├── dense.nii              # Generated density mask
-│   ├── mask.json              # Mask metadata
+├── scan1/
+│   ├── dense.nii           # Density mask
+│   ├── mask.json           # Mask metadata
 │   └── dense_mask/
-│       ├── mask.nii           # Final processed mask
-│       ├── slice_0_threshold_0.57.png
-│       ├── slice_1_threshold_0.54.png
-│       └── ...                # Individual slice visualizations
+│       ├── mask.nii        # Final processed mask
+│       ├── slice_0_*.png   # Slice visualizations
+│       └── ...
+└── ...
 ```
+
+---
 
 ## Project Structure
 
 ```
-density_segmentation_gui/
-├── src/
-│   ├── app.py                 # Main Streamlit application
-│   ├── draw_step.py          # Mask drawing functionality
-│   ├── threshold_step.py     # Threshold adjustment interface
-│   ├── process_step.py       # Processing pipeline
-│   └── utils.py              # Utility functions and classes
-├── media/                    # Input NIfTI files directory
-├── output/                   # Generated outputs directory
-├── requirements.txt          # Python dependencies
-├── pyproject.toml           # Project configuration
-└── README.md                # Project documentation
+src/
+├── app.py                # Main Streamlit app (controls workflow)
+├── file_selection_step.py # File selection logic
+├── batch_draw_step.py     # Mask drawing step
+├── batch_threshold_step.py# Threshold adjustment step
+├── batch_process_step.py  # Processing/export step
+├── utils.py               # Utility functions
+static/                    # CSS styles
+media/                     # Input files
+output/                    # Results
 ```
+
+---
+
+## Frequently Asked Questions
+
+**Q: The app doesn't start or shows an error.**
+A: Make sure you have activated your virtual environment and installed all dependencies with `pip install -r requirements.txt`.
+
+**Q: My files don't appear in the app.**
+A: Place your `.nii` files in the `media/` folder before starting the app.
+
+**Q: Where are the results saved?**
+A: All outputs are saved in the `output/` folder, organized by input file name.
+
+---
 
 ## Dependencies
 
-- **Streamlit**: Web application framework
-- **NiBabel**: NIfTI file handling
-- **NumPy**: Numerical computing
-- **Matplotlib**: Data visualization
-- **OpenCV**: Computer vision operations
-- **Pillow**: Image processing
-- **Streamlit-drawable-canvas**: Interactive drawing component
+- [Streamlit](https://streamlit.io/) (web interface)
+- [NiBabel](https://nipy.org/nibabel/) (NIfTI file handling)
+- [NumPy](https://numpy.org/) (numerical operations)
+- [Matplotlib](https://matplotlib.org/) (visualization)
+- [OpenCV](https://opencv.org/) (image processing)
+- [Pillow](https://python-pillow.org/) (image processing)
+- [streamlit-drawable-canvas](https://github.com/andfanilo/streamlit-drawable-canvas) (drawing masks)
+
+---
 
 ## Acknowledgments
 
