@@ -173,8 +173,21 @@ def create_temp_jpeg_folder(processed_slices, temp_dir_base="temp_sam2_frames"):
         
         for i, slice_data in enumerate(processed_slices):
             # Ensure slice is 2D
-            if len(slice_data.shape) == 3:
-                slice_data = slice_data[:, :, 0]  # Take first channel
+            if len(slice_data.shape) > 2:
+                print(f"Warning: Frame {i} has {len(slice_data.shape)} dimensions: {slice_data.shape}")
+                if len(slice_data.shape) == 3:
+                    slice_data = slice_data[:, :, 0]  # Take first channel
+                elif len(slice_data.shape) == 4:
+                    slice_data = slice_data[:, :, 0, 0]  # Take first channel of first batch
+                else:
+                    print(f"Error: Frame {i} has too many dimensions: {slice_data.shape}")
+                    return None, None, False
+                print(f"Corrected to 2D: {slice_data.shape}")
+            
+            # Ensure we have a valid 2D array
+            if len(slice_data.shape) != 2:
+                print(f"Error: Frame {i} is not 2D after correction: {slice_data.shape}")
+                return None, None, False
             
             # Normalize to 0-255 range for JPEG
             if slice_data.dtype != np.uint8:
@@ -656,6 +669,19 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
             slice_data = nii_data[slice_idx, :, :]
             slice_mask = mask_data[slice_idx, :, :] if mask_data is not None else np.ones_like(slice_data)
             
+            # Debug: Check slice dimensions
+            if slice_idx == 0 or slice_idx == middle_slice_idx:
+                print(f"Slice {slice_idx} data shape: {slice_data.shape}, mask shape: {slice_mask.shape}")
+            
+            # Ensure slice_data and slice_mask are 2D
+            if len(slice_data.shape) != 2:
+                print(f"Error: Slice {slice_idx} data is not 2D: {slice_data.shape}")
+                return False, f"Slice {slice_idx} data has invalid dimensions: {slice_data.shape}", None
+            
+            if len(slice_mask.shape) != 2:
+                print(f"Error: Slice {slice_idx} mask is not 2D: {slice_mask.shape}")
+                return False, f"Slice {slice_idx} mask has invalid dimensions: {slice_mask.shape}", None
+            
             # Apply EXACT same threshold logic as ThresholdOperations.threshold_image
             data_min = np.min(slice_data)
             data_max = np.max(slice_data)
@@ -717,11 +743,19 @@ def process_nifti_with_sam2_propagation(nifti_path, mask_data, threshold_data, o
         # Add central thresholded slice as first frame (frame 0)
         processed_slices.append((central_thresholded_roi * 255).astype(np.uint8))
         print(f"✅ Added central thresholded slice {middle_slice_idx} as frame 0 (first in SAM2 sequence)")
+        print(f"Central slice shape: {central_thresholded_roi.shape}")
         
         # Add all other thresholded slices in order (excluding central since it's already first)
         for slice_idx in range(num_slices):
             if slice_idx != middle_slice_idx:  # Skip central since it's already added as first
                 thresholded_roi = all_thresholded_roi_slices[slice_idx]
+                print(f"Processing slice {slice_idx}, shape: {thresholded_roi.shape}")
+                
+                # Ensure it's 2D
+                if len(thresholded_roi.shape) > 2:
+                    print(f"Warning: Slice {slice_idx} has {len(thresholded_roi.shape)} dimensions, taking first 2D slice")
+                    thresholded_roi = thresholded_roi[:, :, 0] if len(thresholded_roi.shape) == 3 else thresholded_roi
+                
                 processed_slices.append((thresholded_roi * 255).astype(np.uint8))
         
         print(f"✅ Prepared {len(processed_slices)} slices for SAM2: central (frame 0) + {len(processed_slices)-1} other slices")
