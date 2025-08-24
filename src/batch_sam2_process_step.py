@@ -462,3 +462,146 @@ def process_sam2_batch_step(nifti_path, mask_path, threshold_data, output_dir,
         nifti_path, mask_path, threshold_data, output_dir,
         update_progress, update_status, visualization_placeholder
     )
+
+
+def batch_sam2_process_step():
+    """
+    Streamlit UI function for SAM2 post-processing mode
+    
+    This function provides the user interface for SAM2 video segmentation
+    that post-processes results from batch_process_step.
+    """
+    st.markdown("## 🎬 SAM2 Video Segmentation (Post-Processing Mode)")
+    st.markdown("""
+    ### 🎯 **SAM2 Post-Processing Approach**
+    
+    This mode uses **SAM2 video propagation** to refine the segmentation results from the batch processing step.
+    
+    **Workflow:**
+    1. 📁 **Input**: Uses PNG files from `dense_mask` folder (created by batch_process_step)
+    2. 🎬 **SAM2 Processing**: Applies video propagation for temporal consistency  
+    3. 💾 **Output**: Refined segmentation saved in `sam_mask` folder
+    
+    **Requirements:**
+    - Run **Batch Process Step** first to generate PNG files
+    - SAM2 model checkpoints must be available
+    """)
+    
+    # Check if batch processing results exist
+    if 'nifti_path' not in st.session_state or not st.session_state.nifti_path:
+        st.warning("⚠️ Please select a NIfTI file in the File Selection step first.")
+        return
+    
+    # Look for dense_mask folder
+    nifti_dir = os.path.dirname(st.session_state.nifti_path)
+    output_base_dir = os.path.join(nifti_dir, "output")
+    dense_mask_dir = os.path.join(output_base_dir, "dense_mask")
+    
+    if not os.path.exists(dense_mask_dir):
+        st.error("❌ **No batch processing results found!**")
+        st.markdown("""
+        Please run the **Batch Process Step** first to generate the PNG files that SAM2 will refine.
+        
+        Expected location: `{}/dense_mask/`
+        """.format(output_base_dir))
+        return
+    
+    # Check for PNG files
+    png_files = [f for f in os.listdir(dense_mask_dir) if f.endswith('.png')]
+    if not png_files:
+        st.error("❌ **No PNG files found in dense_mask folder!**")
+        st.markdown("Run the Batch Process Step to generate segmentation PNGs first.")
+        return
+    
+    st.success(f"✅ **Found {len(png_files)} PNG files ready for SAM2 refinement**")
+    st.info(f"📁 **Source**: `{dense_mask_dir}`")
+    
+    # SAM2 configuration
+    st.markdown("### ⚙️ **SAM2 Configuration**")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        sam2_config = st.selectbox(
+            "SAM2 Model Configuration",
+            ["sam2_hiera_large.yaml", "sam2_hiera_base_plus.yaml", "sam2_hiera_small.yaml"],
+            index=0,
+            help="Choose SAM2 model configuration. Larger models are more accurate but slower."
+        )
+    
+    with col2:
+        checkpoint_path = st.text_input(
+            "Checkpoint Path",
+            value="checkpoints/sam2_hiera_large.pt",
+            help="Path to SAM2 model checkpoint file"
+        )
+    
+    # Output directory
+    sam_mask_dir = os.path.join(output_base_dir, "sam_mask")
+    st.markdown(f"**📁 Output Directory**: `{sam_mask_dir}`")
+    
+    # Processing button
+    if st.button("🚀 **Start SAM2 Post-Processing**", type="primary"):
+        
+        # Create progress tracking
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Create visualization placeholder
+        visualization_placeholder = st.empty()
+        
+        def update_progress(current, total, message=""):
+            progress = current / total if total > 0 else 0
+            progress_bar.progress(progress)
+            if message:
+                status_text.text(f"Step {current}/{total}: {message}")
+        
+        def update_status(message, level="info"):
+            if level == "error":
+                st.error(message)
+            elif level == "warning":
+                st.warning(message)
+            elif level == "success":
+                st.success(message)
+            else:
+                st.info(message)
+        
+        try:
+            # Run SAM2 post-processing
+            success, message, results = process_sam2_video_segmentation(
+                nifti_path=st.session_state.nifti_path,
+                mask_path=dense_mask_dir,
+                threshold_data={},  # Not used in post-processing mode
+                output_dir=sam_mask_dir,
+                update_progress=update_progress,
+                update_status=update_status,
+                visualization_placeholder=visualization_placeholder
+            )
+            
+            if success:
+                st.success("🎉 **SAM2 Post-Processing Completed Successfully!**")
+                
+                if results:
+                    st.markdown("### 📊 **Results Summary**")
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric("Input PNGs", results.get('source_pngs', 0))
+                    with col2:
+                        st.metric("Processed Frames", results.get('propagated_frames', 0))
+                    with col3:
+                        st.metric("Active Masks", results.get('active_masks', 0))
+                    
+                    st.markdown(f"**📁 Results saved to**: `{results.get('save_dir', sam_mask_dir)}`")
+                    
+                    if results.get('debug_dir'):
+                        st.markdown(f"**🔍 Debug images**: `{results.get('debug_dir')}`")
+            else:
+                st.error(f"❌ **SAM2 Processing Failed**: {message}")
+                
+        except Exception as e:
+            st.error(f"❌ **Error during SAM2 processing**: {str(e)}")
+            
+        finally:
+            progress_bar.empty()
+            status_text.empty()
