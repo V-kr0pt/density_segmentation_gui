@@ -152,7 +152,7 @@ def batch_process_step():
         overall_status = st.empty()
         total_operations = len(files_to_process)
         for file_idx, file in enumerate(files_to_process):
-            file_name = file.split('.')[0] if file.endswith('.nii') else file
+            file_name = file.split('.')[0] if file.endswith('.nii') or file.endswith('.nii.gz') else file     
             overall_status.text(f"Processing file {file_idx + 1}/{total_operations}: {file}")
             try:
                 # --- File Paths ---
@@ -216,7 +216,7 @@ def batch_process_step():
     """, unsafe_allow_html=True)
 
     for file in files_to_process:
-        file_name = file.split('.')[0] if file.endswith('.nii') else file
+        file_name = file.split('.')[0] if file.endswith('.nii') or file.endswith('.nii.gz') else file            
         threshold = final_thresholds[file_name]
         col1, col2 = st.columns([4, 1])
         with col1:

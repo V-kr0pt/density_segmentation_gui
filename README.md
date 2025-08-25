@@ -27,7 +27,8 @@ Density Segmentation GUI is a visual tool for segmenting medical images, designe
 
 
 ### 2. Installation
-Clone the repository and set up a virtual environment. The steps are slightly different for Windows and macOS/Linux:
+Clone the repository and set up a virtual environment. You can either set up with **pip/venv** or with **uv**.
+The steps are slightly different for Windows and macOS/Linux:
 
 #### **For macOS/Linux:**
 ```bash
@@ -36,6 +37,17 @@ cd density_segmentation_gui
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+```
+
+If you have {uv}[https://docs.astral.sh/uv/] installed, setup is even simpler:
+```bash
+git clone https://github.com/V-kr0pt/density_segmentation_gui.git
+cd density_segmentation_gui
+uv sync
+```
+To launch the app with uv:
+```bash
+uv run streamlit run src/app.py
 ```
 
 #### **For Windows (Command Prompt):**
@@ -73,7 +85,7 @@ The app will open in your browser at [http://localhost:8501](http://localhost:85
 The app guides you through four main steps:
 
 1. **Select Files**
-	- Place your `.nii` files in the `media/` folder.
+	- Place your Nifti (`.nii`, `.nii.gz`) or Dicom (`.dcm`, `.dicom`) files in the `media/` folder.
 	- Use the app to select one or more files for processing.
 
 2. **Draw Masks**

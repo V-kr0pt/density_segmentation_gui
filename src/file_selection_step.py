@@ -21,7 +21,7 @@ def file_selection_step():
     # Step description
     st.markdown("""
     <div class="step-container">
-        <p>Choose NIfTI (.nii) files or DICOM folders for batch processing.</p>
+        <p>Choose NIfTI (.nii or .nii.gz) files or DICOM folders for batch processing.</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -87,7 +87,7 @@ def file_selection_step():
     # =============================
     # Get all files in input folder
     all_files_inside_input = os.listdir(input_folder)
-    all_nii_files = [f for f in all_files_inside_input if f.endswith('.nii')]
+    all_nii_files = [f for f in all_files_inside_input if (f.endswith('.nii') or f.endswith('.nii.gz'))]
     all_dicom_folders = [f for f in all_files_inside_input if os.path.isdir(os.path.join(input_folder, f))]
     # Only keep folders that contain .dicom or .dcm files
     all_dicom_folders = [f for f in all_dicom_folders if any(
@@ -125,7 +125,7 @@ def file_selection_step():
     selected_files = st.multiselect(
         "Select files to process:",
         available_files,
-        default=available_files if len(available_files) <= 5 else available_files[:5]
+        default=available_files if len(available_files) <= 20 else available_files[:20]
     )
 
     if len(selected_files) == 0:
