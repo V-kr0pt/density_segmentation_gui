@@ -191,21 +191,24 @@ def batch_draw_step():
     # =========================
     if canvas_result.json_data is not None:
         objects = canvas_result.json_data["objects"]
-        if len(objects) > 0:
-            polygon = objects[-1]["path"]
-            # Transform points from rotated canvas back to original orientation
-            points_rotated = [(int(p[1]), int(p[2])) for p in polygon if len(p) == 3]
-            # For 90 degree rotation (counterclockwise), new_x = y, new_y = width - x
-            points = [(rotated_height - y, x) for x, y in points_rotated]
-            st.session_state.points = points
+        polygons = []
+        for obj in objects:
+            if obj["type"] == "path":  # ensure it's a polygon
+                poly = obj["path"]
+                points_rotated = [(int(p[1]), int(p[2])) for p in poly if len(p) == 3]
+                points = [(rotated_height - y, x) for x, y in points_rotated]
+                polygons.append(points)
+
+    # Save all polygons to session state
+    st.session_state.polygons = polygons
 
     # =========================
     # Mask Creation Logic
     # =========================
     if st.session_state.get("create_mask", False):
-        if len(st.session_state.points) >= 3:
-            result, mask = MaskOperations.create_mask(image, st.session_state.points, reduction_scale=scale)
-            st.session_state["mask"] = mask
+        if "polygons" in st.session_state and len(st.session_state.polygons) > 0:
+            result, combined_mask = MaskOperations.create_combined_mask(image, st.session_state.polygons, scale)
+            st.session_state["mask"] = combined_mask
             st.session_state["result"] = result
             st.session_state["output_path"] = os.path.join(os.getcwd(), 'output', current_file_name)
             st.session_state["create_mask"] = False

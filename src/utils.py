@@ -160,7 +160,7 @@ class MaskOperations:
         if len(points) < 3:
             raise ValueError("At least 3 points are required to create a polygon mask.")
         
-        # Ajuste os pontos para o tamanho original da imagem
+        # Adjust the points to the original image scale
         scale = 1 / reduction_scale
         scaled_points = [(int(x * scale), int(y * scale)) for (x, y) in points]
         
@@ -171,6 +171,16 @@ class MaskOperations:
         # Use only one channel for bitwise operations 
         result = cv2.bitwise_and(image, image, mask=mask)
         return result, mask
+
+    @staticmethod
+    def create_combined_mask(image, polygons, reduction_scale=1.0):
+        combined_mask = np.zeros_like(image[:,:,0], dtype=np.uint8)  # ensure single channel
+        for poly in polygons:
+            if len(poly) >= 3:
+                _, mask = MaskOperations.create_mask(image, poly, reduction_scale=reduction_scale)
+                combined_mask = np.maximum(combined_mask, mask)  # union of all polygons
+        result = cv2.bitwise_and(image, image, mask=combined_mask)
+        return result, combined_mask
     
     @staticmethod 
     def create_mask_nifti(folder_path, original_affine):
