@@ -39,7 +39,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-If you have {uv}[https://docs.astral.sh/uv/] installed, setup is even simpler:
+If you have [uv](https://docs.astral.sh/uv/) installed, setup is even simpler:
 ```bash
 git clone https://github.com/V-kr0pt/density_segmentation_gui.git
 cd density_segmentation_gui
