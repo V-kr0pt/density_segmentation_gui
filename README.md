@@ -45,11 +45,6 @@ git clone https://github.com/V-kr0pt/density_segmentation_gui.git
 cd density_segmentation_gui
 uv sync
 ```
-To launch the app with uv:
-```bash
-uv run streamlit run src/app.py
-```
-
 #### **For Windows (Command Prompt):**
 ```cmd
 git clone https://github.com/V-kr0pt/density_segmentation_gui.git
@@ -74,6 +69,11 @@ After activating your virtual environment, start the application:
 
 ```bash
 streamlit run src/app.py
+```
+
+Or to launch the app with uv:
+```bash
+uv run streamlit run src/app.py
 ```
 
 The app will open in your browser at [http://localhost:8501](http://localhost:8501).
@@ -148,14 +148,22 @@ output/                    # Results
 
 ## Frequently Asked Questions
 
-**Q: The app doesn't start or shows an error.**
-A: Make sure you have activated your virtual environment and installed all dependencies with `pip install -r requirements.txt`.
+**Q: The app doesn't start or shows an error.**  
+A: Make sure you have installed all dependencies.  
+- If you used pip/venv, activate your environment and run `pip install -r requirements.txt`.  
+- If you used uv, just run `uv sync` to ensure everything is installed.
 
-**Q: My files don't appear in the app.**
-A: Place your `.nii` files in the `media/` folder before starting the app.
+**Q: My files don't appear in the app.**  
+A: Place your input files in the `media/` folder before starting the app.  
+The application supports the following formats:
+- NIfTI: `.nii`, `.nii.gz`  
+- DICOM: `.dcm`, `.dicom`
 
-**Q: Where are the results saved?**
-A: All outputs are saved in the `output/` folder, organized by input file name.
+**Q: How do I start the app if I used uv?**  
+A: Instead of activating a virtual environment, just run:  
+```bash
+uv run streamlit run src/app.py
+```
 
 ---
 
