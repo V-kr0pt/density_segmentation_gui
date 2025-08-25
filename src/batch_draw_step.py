@@ -134,6 +134,7 @@ def batch_draw_step():
         st.session_state["nb_of_slices"] = nb_of_slices
         st.session_state["current_batch_file"] = current_file
         st.session_state["points"] = []  # Reset points for new file
+        st.session_state["polygons"] = []
         # Clear other file-specific data
         for key in ["mask", "result", "create_mask"]:
             if key in st.session_state:
@@ -199,8 +200,8 @@ def batch_draw_step():
                 points = [(rotated_height - y, x) for x, y in points_rotated]
                 polygons.append(points)
 
-    # Save all polygons to session state
-    st.session_state.polygons = polygons
+        # Save all polygons to session state
+        st.session_state.polygons = polygons
 
     # =========================
     # Mask Creation Logic
