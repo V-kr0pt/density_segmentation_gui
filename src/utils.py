@@ -130,6 +130,7 @@ class ImageOperations:
         slice_data = np.flip(slice_data, axis=1)  # Flip the slice if needed
         return slice_data
     
+    @staticmethod
     def load_any_slice(file_path, slice_index, dtype=np.float32):
         if file_path.lower().endswith('.nii') or file_path.lower().endswith('.nii.gz'):
             return ImageOperations.load_nii_slice(file_path, slice_index, dtype=dtype)
@@ -289,6 +290,7 @@ class ThresholdOperations:
         return (norm > threshold) & (mask_slice > 0)
 
 
+    @staticmethod
     def adjust_threshold(image_slice, mask_slice, target_area, slice_index):
         threshold = 0.8
         step = 0.01
