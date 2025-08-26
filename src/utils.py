@@ -227,19 +227,22 @@ class MaskOperations:
             nib.save(image_nii, os.path.join(file_path, image_file_name))
 
     @staticmethod
-    def save_mask_json(points, scale, file_path):
+    def save_mask_json(points, scale, file_path, polygons=None):
         os.makedirs(file_path, exist_ok=True)
-        json_data = {"points": points,
-                     "scale": scale}
+        json_data = {
+            "points": points,
+            "scale": scale,
+            "polygons": polygons if polygons is not None else [points]  # Store all polygons for advanced pipeline
+        }
         with open(os.path.join(file_path, "mask.json"), 'w') as f:
             json.dump(json_data, f)
 
     @staticmethod
-    def save_mask(mask, affine, nb_of_slices, file_path, file_name="dense.nii", points=None, scale=1.0):
+    def save_mask(mask, affine, nb_of_slices, file_path, file_name="dense.nii", points=None, scale=1.0, polygons=None):
         os.makedirs(file_path, exist_ok=True)
         MaskOperations.save_nii_mask(mask, affine, nb_of_slices, file_path, file_name)
         assert points is not None, "Points must be provided to save mask JSON."
-        MaskOperations.save_mask_json(points, scale, file_path)
+        MaskOperations.save_mask_json(points, scale, file_path, polygons)
     
 if __name__ == "__main__":
     # Example usage

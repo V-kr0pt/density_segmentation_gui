@@ -2,6 +2,7 @@ from file_selection_step import file_selection_step
 from batch_draw_step import batch_draw_step
 from batch_threshold_step import batch_threshold_step
 from batch_process_step import batch_process_step
+from advanced_pipeline_step import advanced_pipeline_step
 import streamlit as st
 
 # ================== Main App ==================
@@ -39,6 +40,10 @@ def main():
             # Feature overview
             st.markdown("""
             <div class="feature-card">
+                <h4>Processing Modes</h4>
+                <p><strong>🎯 Standard Pipeline:</strong> Traditional threshold-based segmentation with manual drawing</p>
+                <p><strong>🚀 Advanced SAM2 Pipeline:</strong> AI-powered segmentation with center-outward propagation and adaptive refinement</p>
+                <hr>
                 <h4>How it works</h4>
                 <p><strong>1. Select files:</strong> Choose your NIfTI (.nii or .nii.gz) or DICOM files from the media directory</p>
                 <p><strong>2. Draw masks:</strong> Create interactive masks for each image</p>
@@ -50,10 +55,20 @@ def main():
             # Add spacing
             st.markdown("<br>", unsafe_allow_html=True)
             
-            # Start button
-            if st.button("Start Processing", type="primary", use_container_width=True):
-                st.session_state["current_step"] = "file_selection"
-                st.rerun()
+            # Mode selection buttons
+            col_a, col_b = st.columns(2)
+            
+            with col_a:
+                if st.button("🎯 Standard Pipeline", type="secondary", use_container_width=True):
+                    st.session_state["processing_mode"] = "standard"
+                    st.session_state["current_step"] = "file_selection"
+                    st.rerun()
+            
+            with col_b:
+                if st.button("🚀 Advanced SAM2 Pipeline", type="primary", use_container_width=True):
+                    st.session_state["processing_mode"] = "advanced"
+                    st.session_state["current_step"] = "file_selection"
+                    st.rerun()
             
             # Footer info
             st.markdown("""
@@ -72,6 +87,8 @@ def main():
         batch_threshold_step()
     elif st.session_state["current_step"] == "batch_process":
         batch_process_step()
+    elif st.session_state["current_step"] == "advanced_pipeline":
+        advanced_pipeline_step()
     
     # Sidebar navigation
     with st.sidebar:
@@ -95,6 +112,8 @@ def main():
         
         # Show current step 
         current_step = st.session_state.get("current_step", "mode_selection")
+        processing_mode = st.session_state.get("processing_mode", "standard")
+        
         if current_step == "file_selection":
             step_text = "📂 File Selection"
         elif current_step == "batch_draw":
@@ -103,10 +122,15 @@ def main():
             step_text = "🎯 Setting Thresholds"
         elif current_step == "batch_process":
             step_text = "⚙️ Processing Files"
+        elif current_step == "advanced_pipeline":
+            step_text = "🚀 Advanced SAM2 Pipeline"
         else:
             step_text = "🏠 Main Menu"
         
-        st.markdown(f'<div class="current-step"><strong>Current Step:</strong><br>{step_text}</div>', unsafe_allow_html=True)
+        # Show processing mode
+        mode_text = "🚀 Advanced SAM2" if processing_mode == "advanced" else "🎯 Standard"
+        
+        st.markdown(f'<div class="current-step"><strong>Mode:</strong> {mode_text}<br><strong>Current Step:</strong><br>{step_text}</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()

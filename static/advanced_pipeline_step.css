@@ -1,0 +1,232 @@
+/* Advanced Pipeline Step Styling */
+
+.description {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 1.5rem;
+    border-radius: 10px;
+    text-align: center;
+    font-size: 1.1rem;
+    margin-bottom: 2rem;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.config-section {
+    background: #f8f9fa;
+    padding: 1rem;
+    border-radius: 8px;
+    margin: 1rem 0;
+    border-left: 4px solid #007bff;
+}
+
+.config-section h4 {
+    color: #007bff;
+    margin-bottom: 0.5rem;
+}
+
+.sam2-status {
+    background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+    color: white;
+    padding: 1rem;
+    border-radius: 8px;
+    text-align: center;
+    margin: 1rem 0;
+}
+
+.sam2-status.loading {
+    background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%);
+}
+
+.sam2-status.error {
+    background: linear-gradient(135deg, #dc3545 0%, #e83e8c 100%);
+}
+
+.pipeline-progress {
+    background: #ffffff;
+    padding: 1.5rem;
+    border-radius: 10px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    margin: 1rem 0;
+}
+
+.file-result {
+    background: #f8f9fa;
+    padding: 1rem;
+    border-radius: 8px;
+    margin: 0.5rem 0;
+    border-left: 4px solid #28a745;
+}
+
+.file-result.processing {
+    border-left-color: #ffc107;
+    background: #fff3cd;
+}
+
+.file-result.error {
+    border-left-color: #dc3545;
+    background: #f8d7da;
+}
+
+.metric-card {
+    background: white;
+    padding: 1rem;
+    border-radius: 8px;
+    text-align: center;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.metric-value {
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: #007bff;
+}
+
+.metric-label {
+    font-size: 0.9rem;
+    color: #6c757d;
+    margin-top: 0.5rem;
+}
+
+.config-expander {
+    background: #ffffff;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    margin: 0.5rem 0;
+}
+
+.processing-controls {
+    background: linear-gradient(135deg, #007bff 0%, #6610f2 100%);
+    color: white;
+    padding: 1.5rem;
+    border-radius: 10px;
+    margin: 1rem 0;
+}
+
+.processing-controls h3 {
+    color: white;
+    margin-bottom: 1rem;
+}
+
+.nav-buttons {
+    background: #f8f9fa;
+    padding: 1rem;
+    border-radius: 8px;
+    margin-top: 2rem;
+}
+
+/* Progress bar styling */
+.stProgress > div > div > div > div {
+    background: linear-gradient(90deg, #007bff, #28a745);
+}
+
+/* Button styling */
+.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, #007bff 0%, #6610f2 100%);
+    border: none;
+    border-radius: 25px;
+    padding: 0.5rem 2rem;
+    font-weight: 600;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    transition: all 0.3s ease;
+}
+
+.stButton > button[kind="primary"]:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 8px rgba(0, 0, 0, 0.15);
+}
+
+.stButton > button[kind="secondary"] {
+    background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+    border: none;
+    border-radius: 25px;
+    padding: 0.5rem 2rem;
+    font-weight: 600;
+    color: white;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    transition: all 0.3s ease;
+}
+
+/* Alert styling */
+.stAlert {
+    border-radius: 8px;
+    border: none;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Expander styling */
+.streamlit-expanderHeader {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 0.5rem;
+    font-weight: 600;
+}
+
+/* Selectbox and slider styling */
+.stSelectbox > div > div {
+    border-radius: 8px;
+    border: 2px solid #dee2e6;
+}
+
+.stSlider > div > div > div > div {
+    background: linear-gradient(90deg, #007bff, #28a745);
+}
+
+/* File status indicators */
+.file-status-ready {
+    color: #28a745;
+    font-weight: bold;
+}
+
+.file-status-processing {
+    color: #ffc107;
+    font-weight: bold;
+}
+
+.file-status-error {
+    color: #dc3545;
+    font-weight: bold;
+}
+
+.file-status-completed {
+    color: #007bff;
+    font-weight: bold;
+}
+
+/* Results display */
+.results-container {
+    background: #ffffff;
+    border-radius: 10px;
+    padding: 1.5rem;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    margin: 1rem 0;
+}
+
+.result-item {
+    background: #f8f9fa;
+    padding: 1rem;
+    border-radius: 8px;
+    margin: 0.5rem 0;
+    border-left: 4px solid #007bff;
+}
+
+.result-metrics {
+    display: flex;
+    justify-content: space-around;
+    margin: 1rem 0;
+}
+
+.result-metric {
+    text-align: center;
+    padding: 0.5rem;
+}
+
+.result-metric-value {
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: #007bff;
+}
+
+.result-metric-label {
+    font-size: 0.8rem;
+    color: #6c757d;
+}

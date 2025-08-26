@@ -53,13 +53,31 @@ def batch_draw_step():
     # =========================
     if current_index >= len(batch_files):
         st.success("🎉 All masks have been drawn!")
-        if st.button("→ Continue to Threshold Step"):
-            st.session_state["batch_current_index"] = 0
-            st.session_state["current_step"] = "batch_threshold"
-            st.rerun()
-        if st.button("← Back to File Selection"):
-            st.session_state["current_step"] = "file_selection"
-            st.rerun()
+        
+        processing_mode = st.session_state.get("processing_mode", "standard")
+        
+        if processing_mode == "advanced":
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🚀 Continue to Advanced SAM2 Pipeline", type="primary"):
+                    st.session_state["batch_current_index"] = 0
+                    st.session_state["current_step"] = "advanced_pipeline"
+                    st.rerun()
+            with col2:
+                if st.button("← Back to File Selection"):
+                    st.session_state["current_step"] = "file_selection"
+                    st.rerun()
+        else:
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("→ Continue to Threshold Step", type="primary"):
+                    st.session_state["batch_current_index"] = 0
+                    st.session_state["current_step"] = "batch_threshold"
+                    st.rerun()
+            with col2:
+                if st.button("← Back to File Selection"):
+                    st.session_state["current_step"] = "file_selection"
+                    st.rerun()
         return
 
     # =========================
@@ -212,6 +230,10 @@ def batch_draw_step():
             st.session_state["mask"] = combined_mask
             st.session_state["result"] = result
             st.session_state["output_path"] = os.path.join(os.getcwd(), 'output', current_file_name)
+            # Save the first polygon points for the advanced pipeline
+            # The advanced pipeline needs the polygon coordinates for the central slice
+            if len(st.session_state.polygons) > 0:
+                st.session_state["points"] = st.session_state.polygons[0]  # Use first polygon
             st.session_state["create_mask"] = False
             st.rerun()
         else:
@@ -239,7 +261,8 @@ def batch_draw_step():
                     nb_of_slices=st.session_state["nb_of_slices"],
                     file_path=st.session_state["output_path"],
                     points=st.session_state["points"],
-                    scale=st.session_state["scale"]
+                    scale=st.session_state["scale"],
+                    polygons=st.session_state.get("polygons", [])  # Pass all polygons for advanced pipeline
                 )
                 # Mark file as completed
                 st.session_state["batch_completed_files"]["draw"].append(current_file_name)

@@ -168,12 +168,29 @@ def file_selection_step():
     st.session_state["batch_files"] = selected_files
 
     # Button to start batch processing
-    if st.button("Start Batch Processing", type="primary"):
+    processing_mode = st.session_state.get("processing_mode", "standard")
+    
+    if processing_mode == "advanced":
+        button_text = "🚀 Start Advanced SAM2 Pipeline"
+        next_step = "advanced_pipeline"
+        success_msg = f"Advanced SAM2 pipeline started with {len(selected_files)} files!"
+    else:
+        button_text = "🎯 Start Standard Pipeline"
+        next_step = "batch_draw"
+        success_msg = f"Standard batch processing started with {len(selected_files)} files!"
+    
+    if st.button(button_text, type="primary"):
         st.session_state["batch_current_index"] = 0
         st.session_state["batch_step"] = "draw"  # draw, threshold, process
-        st.session_state["current_step"] = "batch_draw"
-        st.success(f"Batch processing started with {len(selected_files)} files!")
+        st.session_state["current_step"] = next_step
+        st.success(success_msg)
         st.rerun()
+
+    # Show mode information
+    if processing_mode == "advanced":
+        st.info("ℹ️ Advanced mode: After drawing masks, you'll proceed directly to the SAM2 pipeline with intelligent propagation and refinement.")
+    else:
+        st.info("ℹ️ Standard mode: Traditional workflow with drawing, threshold adjustment, and processing steps.")
 
     # =============================
     # Show Batch Progress (if in progress)
