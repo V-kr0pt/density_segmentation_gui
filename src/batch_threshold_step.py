@@ -168,15 +168,16 @@ def batch_threshold_step():
         width_options = [400, 500, 600, 700, 800, 900, 1000]
         selected_width = st.selectbox("Image Width", width_options, index=2, key=f"width_{current_file}")
         st.markdown('<div class="threshold-controls">', unsafe_allow_html=True)
-        threshold_key = f"threshold_slider_{current_file_name}"
+        threshold_key = f"threshold_number_{current_file_name}"
         saved_thresholds = st.session_state.get("batch_thresholds", {})
         default_threshold = saved_thresholds.get(current_file_name, 0.38)
-        threshold = st.slider(
+        threshold = st.number_input(
             "Threshold",
             min_value=0.0,
             max_value=1.0,
             value=default_threshold,
             step=0.01,
+            format="%.2f",
             key=threshold_key,
             help="Lower = more inclusive, Higher = more selective"
         )
