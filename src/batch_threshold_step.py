@@ -1,6 +1,7 @@
 import os
 import io
 import json
+import matplotlib.pyplot as plt
 import streamlit as st
 from utils import ImageOperations, ThresholdOperations
 
@@ -162,27 +163,101 @@ def batch_threshold_step():
     # =====================================================
     # Threshold preview and controls 
     # =====================================================
-    st.markdown("### Threshold Preview")
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        width_options = [400, 500, 600, 700, 800, 900, 1000]
-        selected_width = st.selectbox("Image Width", width_options, index=2, key=f"width_{current_file}")
+    st.markdown("### Threshold Configuration")
+    
+    # Main configuration panel
+    with st.container():
         st.markdown('<div class="threshold-controls">', unsafe_allow_html=True)
-        threshold_key = f"threshold_number_{current_file_name}"
-        saved_thresholds = st.session_state.get("batch_thresholds", {})
-        default_threshold = saved_thresholds.get(current_file_name, 0.38)
-        threshold = st.number_input(
-            "Threshold",
-            min_value=0.0,
-            max_value=1.0,
-            value=default_threshold,
-            step=0.01,
-            format="%.2f",
-            key=threshold_key,
-            help="Lower = more inclusive, Higher = more selective"
-        )
+        
+        # Top row: Threshold control and view options
+        config_col1, config_col2, config_col3 = st.columns([2, 2, 1])
+        
+        with config_col1:
+            st.markdown("**Threshold Value**")
+            threshold_key = f"threshold_number_{current_file_name}"
+            saved_thresholds = st.session_state.get("batch_thresholds", {})
+            default_threshold = saved_thresholds.get(current_file_name, 0.38)
+            threshold = st.number_input(
+                "Threshold",
+                min_value=0.0,
+                max_value=1.0,
+                value=default_threshold,
+                step=0.01,
+                format="%.2f",
+                key=threshold_key,
+                help="Lower = more inclusive, Higher = more selective",
+                label_visibility="collapsed"
+            )
+            
+        with config_col2:
+            st.markdown("**View Options**")
+            comparison_mode = st.checkbox("Show side-by-side comparison", 
+                                        key=f"comparison_{current_file_name}",
+                                        help="Compare original image with thresholded result")
+            
+        with config_col3:
+            st.markdown("**Image Width**")
+            width_options = [400, 500, 600, 700, 800]
+            selected_width = st.selectbox("Width", width_options, index=4, 
+                                        key=f"width_{current_file}", 
+                                        label_visibility="collapsed")
+        
         st.markdown('</div>', unsafe_allow_html=True)
-        if st.button("💾 Save & Continue", type="primary", use_container_width=True):
+
+    # Update session state
+    if "batch_thresholds" not in st.session_state:
+        st.session_state["batch_thresholds"] = {}
+    st.session_state["batch_thresholds"][current_file_name] = threshold
+
+    # Image preview section
+    st.markdown("### Image Preview")
+    
+    if comparison_mode:
+        # Side-by-side comparison
+        img_col1, img_col2 = st.columns(2)
+        
+        with img_col1:
+            st.markdown("**Original Image**")
+            fig_raw, ax_raw = plt.subplots(figsize=(16, 16))
+            ax_raw.imshow(img, cmap='gray')
+            ax_raw.axis('off')
+            buf_raw = io.BytesIO()
+            fig_raw.savefig(buf_raw, format='png', bbox_inches='tight', pad_inches=0.05, 
+                          facecolor='white', dpi=300)
+            buf_raw.seek(0)
+            plt.close(fig_raw)
+            st.image(buf_raw, width=int(selected_width*0.60))
+            
+        with img_col2:
+            st.markdown("**Thresholded Result**")
+            # Display thresholded image
+            fig_thresh = ThresholdOperations.display_thresholded_slice(img, msk, threshold)
+            fig_thresh.set_size_inches(16, 16)
+            buf_thresh = io.BytesIO()
+            fig_thresh.savefig(buf_thresh, format='png', bbox_inches='tight', pad_inches=0.05, dpi=300)
+            buf_thresh.seek(0)
+            plt.close(fig_thresh)
+            st.image(buf_thresh, width=int(selected_width*0.60))
+            
+    else:
+        # Single thresholded image view
+        # Center the image
+        img_display_col1, img_display_col2, img_display_col3 = st.columns([1, 2, 1])
+        with img_display_col2:
+            fig = ThresholdOperations.display_thresholded_slice(img, msk, threshold)
+            fig.set_size_inches(16, 16)
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.05, dpi=300)
+            buf.seek(0)
+            plt.close(fig)
+            st.image(buf, width=selected_width)
+
+    # Action buttons section
+    st.markdown("---")
+    button_col1, button_col2, button_col3 = st.columns([2, 1, 2])
+    
+    with button_col1:
+        if st.button("Save & Continue", type="primary", use_container_width=True):
             if "batch_final_thresholds" not in st.session_state:
                 st.session_state["batch_final_thresholds"] = {}
             st.session_state["batch_final_thresholds"][current_file_name] = threshold
@@ -192,23 +267,15 @@ def batch_threshold_step():
                     json.dump({"threshold": threshold}, f)
                 st.session_state["batch_completed_files"]["threshold"].append(current_file_name)
                 st.session_state["batch_current_index"] = current_index + 1
-                st.success(f"Threshold {threshold:.2f} saved!")
+                st.success(f"Threshold {threshold:.2f} saved successfully!")
             except Exception as e:
-                st.warning(f"Could not save threshold: {e}")
+                st.error(f"Could not save threshold: {e}")
             st.rerun()
-        if st.button("← Back to Draw Step", use_container_width=True):
+    
+    with button_col3:
+        if st.button("Back to Draw Step", use_container_width=True):
             st.session_state["current_step"] = "batch_draw"
             st.rerun()
-    with col2:
-        if "batch_thresholds" not in st.session_state:
-            st.session_state["batch_thresholds"] = {}
-        st.session_state["batch_thresholds"][current_file_name] = threshold
-        fig = ThresholdOperations.display_thresholded_slice(img, msk, threshold)
-        buf = io.BytesIO()
-        fig.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
-        buf.seek(0)
-        st.image(buf, width=selected_width)
-    st.markdown('</div>', unsafe_allow_html=True)
 
     # =====================================================
     # Show current thresholds table 
