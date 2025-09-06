@@ -197,7 +197,7 @@ def batch_threshold_step():
             
         with config_col3:
             st.markdown("**Image Width**")
-            width_options = [400, 500, 600, 700, 800]
+            width_options = [400, 500, 600, 700, 800, 900, 1000, 1200, 1400]
             selected_width = st.selectbox("Width", width_options, index=4, 
                                         key=f"width_{current_file}", 
                                         label_visibility="collapsed")
