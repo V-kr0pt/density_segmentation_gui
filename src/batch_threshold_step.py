@@ -191,7 +191,8 @@ def batch_threshold_step():
             
         with config_col2:
             st.markdown("**View Options**")
-            comparison_mode = st.checkbox("Show side-by-side comparison", 
+            comparison_mode = st.checkbox("Show side-by-side comparison",
+                                        value=True, 
                                         key=f"comparison_{current_file_name}",
                                         help="Compare original image with thresholded result")
             
