@@ -199,9 +199,16 @@ def batch_threshold_step():
         with config_col3:
             st.markdown("**Image Width**")
             width_options = [400, 500, 600, 700, 800, 900, 1000, 1200, 1400]
-            selected_width = st.selectbox("Width", width_options, index=4, 
+            # Retrieve the last selected width index from session state or use default
+            width_key = "last_selected_width_index"
+            default_index = st.session_state.get(width_key, 4)
+            
+            selected_width = st.selectbox("Width", width_options, index=default_index, 
                                         key=f"width_{current_file}", 
                                         label_visibility="collapsed")
+            
+            # Save the selected index to session state for future use
+            st.session_state[width_key] = width_options.index(selected_width)
         
         st.markdown('</div>', unsafe_allow_html=True)
 
