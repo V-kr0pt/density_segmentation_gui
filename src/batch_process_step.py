@@ -377,7 +377,6 @@ def batch_process_step():
             st.metric("Available Memory", f"{system_info['memory_available_mb']} MB")
         
         with col2:
-            st.metric("Recommended Workers", system_info['optimal_workers'])
             if 'cpu_percent' in system_info:
                 st.metric("Current CPU Usage", f"{system_info['cpu_percent']:.1f}%")
     
@@ -389,10 +388,13 @@ def batch_process_step():
     memory_factor = f"Memory ({system_info['memory_available_mb']}MB ÷ 500MB per thread)"
     workload_factor = f"Workload (min of {len(files_to_process)} files, max 6)"
     
-    max_workers = st.selectbox(
+    # Manual thread selection
+    max_workers = st.number_input(
         "Number of parallel threads:",
-        options=[1, 2, 4, 6, 8, 12, 16],
-        index=min(6, [1, 2, 4, 6, 8, 12, 16].index(default_workers)) if default_workers in [1, 2, 4, 6, 8, 12, 16] else 2,
+        min_value=1,
+        max_value=128,
+        value=default_workers,
+        step=1,
         help=f"Recommended: {default_workers} threads\n\n"
              f"Calculation based on:\n"
              f"• {cpu_factor}\n"
