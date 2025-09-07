@@ -94,7 +94,7 @@ The app guides you through four main steps:
 	- Save your mask to continue.
 
 3. **Adjust Thresholds**
-	- Fine-tune segmentation by adjusting a threshold slider.
+	- Fine-tune segmentation by adjusting the threshold value using a number input field.
 	- Instantly preview how the threshold affects the mask.
 	- Save the optimal threshold for each file.
 
