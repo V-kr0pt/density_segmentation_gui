@@ -7,7 +7,11 @@
 
 ## Project Overview
 
-Density Segmentation GUI is a visual tool for segmenting medical images, designed for users with no coding experience. It guides you through selecting files, drawing segmentation masks, adjusting thresholds, and processing results—all through an interactive web interface.
+Density Segmentation GUI is an interactive web-based tool for segmenting digital breast tomosynthesis (DBT) images. It builds on [Tamerlan Mustafaev's](https://github.com/RadioTamerlan) segmentation algorithm and provides an intuitive interface for selecting files, drawing masks, adjusting thresholds, and processing results
+
+<p align="center">
+  <img src="GUI_flowchart_v1.jpg" alt="GUI Flowchart" width="600">
+</p>
 
 **Key features:**
 - Step-by-step workflow for batch or single-file segmentation
