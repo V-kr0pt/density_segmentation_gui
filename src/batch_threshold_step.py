@@ -153,7 +153,7 @@ def batch_threshold_step():
 
     try:
         img = ImageOperations.load_central_slice_any(original_image_path)
-        msk = ImageOperations.load_nii_central_slice(mask_path, flip=True)
+        msk = ImageOperations.load_nii_central_slice(mask_path)
     except Exception as e:
         st.error(f"Error loading images: {str(e)}")
         if st.button("Skip this file"):
