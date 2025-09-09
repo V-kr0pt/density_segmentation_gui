@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
 from utils import ImageOperations, MaskOperations, ThresholdOperations
 from performance_config import performance_config, get_system_info
+import matplotlib.pyplot as plt
 
 
 # =========================
@@ -133,7 +134,6 @@ class BatchProcessingManager:
                     # Load slice data with lazy loading
                     image_slice = ImageOperations.load_any_slice(original_image_path, slice_index)
                     mask_slice = ImageOperations.load_nii_slice(mask_path, slice_index)
-                    mask_slice = np.flip(mask_slice, axis=1)
                     
                     # Apply dynamic threshold adjustment
                     adjusted_threshold, thresholded_image = ThresholdOperations.adjust_threshold(
@@ -146,7 +146,8 @@ class BatchProcessingManager:
                     filepath = os.path.join(save_dir, filename)
                     
                     # Optimized saving with compression
-                    img_pil = Image.fromarray(binary_image.T, mode='L')
+                    binary_img_pil = np.flip(np.rot90(binary_image, k=1), axis=1)
+                    img_pil = Image.fromarray(binary_img_pil, mode='L')
                     img_pil.save(filepath, optimize=True, compress_level=compression_level)
                     
                     total_processed += 1
