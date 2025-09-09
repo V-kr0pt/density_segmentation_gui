@@ -1,7 +1,7 @@
 
 # Density Segmentation GUI
 
-**An interactive web-based tool for segmenting digital breast tomosynthesis (DBY) images.**
+**An interactive web-based tool for segmenting digital breast tomosynthesis (DBT) images.**
 
 ---
 
