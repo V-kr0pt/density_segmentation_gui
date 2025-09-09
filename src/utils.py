@@ -115,7 +115,6 @@ class ImageOperations:
             raise IndexError(f"Slice index {slice_index} out of range for {len(dicoms)} slices.")
         slice_data = dicoms[slice_index].pixel_array.astype(dtype)
         slice_data = np.rot90(slice_data, k=-1)  # Rotate the slice
-        slice_data = np.flip(slice_data, axis=1)  # Flip the slice if needed
         return slice_data
         
     @staticmethod
