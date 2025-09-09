@@ -148,9 +148,16 @@ def batch_draw_step():
     scale = min(max_width / orig_width, max_height / orig_height, 1)
     if "scale" not in st.session_state:
         st.session_state["scale"] = scale
-    pil_width = int(orig_width * scale)
-    pil_height = int(orig_height * scale)
-    pil_image = Image.fromarray(image).resize((pil_width, pil_height)).rotate(90, expand=True)
+
+    # Pad image to avoid edge issues 
+    padding = 50
+    padded_image = np.pad(image,
+                           pad_width=((padding, padding), (padding, padding), (0, 0)),
+                            mode="constant", constant_values=0)
+    
+    pil_width = int(padded_image.shape[1] * scale)
+    pil_height = int(padded_image.shape[0] * scale)
+    pil_image = Image.fromarray(padded_image).resize((pil_width, pil_height)).rotate(90, expand=True)
     if "points" not in st.session_state:
         st.session_state.points = []
 
@@ -197,7 +204,20 @@ def batch_draw_step():
             if obj["type"] == "path":  # ensure it's a polygon
                 poly = obj["path"]
                 points_rotated = [(int(p[1]), int(p[2])) for p in poly if len(p) == 3]
-                points = [(rotated_height - y, x) for x, y in points_rotated]
+                points = []
+                for x, y in points_rotated:
+                    # removing rotation
+                    px, py = rotated_height - y, x
+
+                    # padding removing
+                    px -= int(padding*scale)
+                    py -= int(padding*scale)
+
+                    # scaling back to original image size
+                    px = min(max(px, 0), image.shape[0] - 1)
+                    py = min(max(py, 0), image.shape[1] - 1)
+
+                    points.append((px, py))
                 polygons.append(points)
 
         # Save all polygons to session state
