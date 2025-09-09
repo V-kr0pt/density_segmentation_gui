@@ -143,7 +143,7 @@ class ImageOperations:
         fig, ax = plt.subplots(figsize=(8, 8))
         ax.imshow(img, cmap='gray')
         ax.imshow(bin_mask, cmap='jet', alpha=0.2)
-        ax.text(0.5, 0.05, f'Threshold: {threshold:.2f}',
+        ax.text(0.5, 0.05, f'Threshold: {threshold:.3f}',
                ha='center', va='center',
                transform=ax.transAxes,
                color='white', fontsize=16)

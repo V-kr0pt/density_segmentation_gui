@@ -275,7 +275,7 @@ def batch_threshold_step():
                     json.dump({"threshold": threshold}, f)
                 st.session_state["batch_completed_files"]["threshold"].append(current_file_name)
                 st.session_state["batch_current_index"] = current_index + 1
-                st.success(f"Threshold {threshold:.2f} saved successfully!")
+                st.success(f"Threshold {threshold:.3f} saved successfully!")
             except Exception as e:
                 st.error(f"Could not save threshold: {e}")
             st.rerun()
