@@ -83,8 +83,8 @@ class ImageOperations:
         central_index = nb_of_slices // 2
         central_slice = dicoms[central_index].pixel_array.astype(dtype)
         central_slice = np.rot90(central_slice, k=-1)  # Rotate the slice for vertical orientation
-        if flip:
-            central_slice = np.flip(central_slice, axis=0)
+        central_slice = np.flip(central_slice, axis=1)
+        central_slice = np.flip(central_slice, axis=0)
 
         return central_slice, np.eye(4), nb_of_slices
     
@@ -114,7 +114,8 @@ class ImageOperations:
         if slice_index < 0 or slice_index >= len(dicoms):
             raise IndexError(f"Slice index {slice_index} out of range for {len(dicoms)} slices.")
         slice_data = dicoms[slice_index].pixel_array.astype(dtype)
-        slice_data = np.rot90(slice_data, k=-1)  # Rotate the slice
+        slice_data = np.rot90(slice_data, k=1)  # Rotate the slice
+        #slice_data = np.flip(slice_data, axis=0)  # Flip for correct orientation
         return slice_data
         
     @staticmethod
