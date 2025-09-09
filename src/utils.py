@@ -1,6 +1,5 @@
 import nibabel as nib
 import pydicom
-import tempfile
 import numpy as np
 from PIL import Image 
 import matplotlib.pyplot as plt
@@ -83,8 +82,8 @@ class ImageOperations:
         central_index = nb_of_slices // 2
         central_slice = dicoms[central_index].pixel_array.astype(dtype)
         central_slice = np.rot90(central_slice, k=-1)  # Rotate the slice for vertical orientation
-        if flip:
-            central_slice = np.flip(central_slice, axis=0)
+        central_slice = np.flip(central_slice, axis=1)
+        central_slice = np.flip(central_slice, axis=0)
 
         return central_slice, np.eye(4), nb_of_slices
     
@@ -114,8 +113,8 @@ class ImageOperations:
         if slice_index < 0 or slice_index >= len(dicoms):
             raise IndexError(f"Slice index {slice_index} out of range for {len(dicoms)} slices.")
         slice_data = dicoms[slice_index].pixel_array.astype(dtype)
-        slice_data = np.rot90(slice_data, k=-1)  # Rotate the slice
-        slice_data = np.flip(slice_data, axis=1)  # Flip the slice if needed
+        slice_data = np.rot90(slice_data, k=1)  # Rotate the slice
+        #slice_data = np.flip(slice_data, axis=0)  # Flip for correct orientation
         return slice_data
         
     @staticmethod
@@ -127,7 +126,6 @@ class ImageOperations:
         del nii_data, nii_obj
         gc.collect()
         slice_data = slice_data.astype(dtype)
-        slice_data = np.flip(slice_data, axis=1)  # Flip the slice if needed
         return slice_data
     
     @staticmethod
@@ -186,13 +184,13 @@ class MaskOperations:
     @staticmethod 
     def create_mask_nifti(folder_path, original_affine):
         mask_path = os.path.join(folder_path, 'mask.nii')
-        images = [np.array(Image.open(os.path.join(folder_path, f)).convert('L')) 
+        images = [np.array(Image.open(os.path.join(folder_path, f)).convert('L'))
                   for f in sorted(os.listdir(folder_path), 
                   key=lambda x: int(x.split('_')[1])) if f.endswith('.png')]
         volume = np.stack(images, axis=0)
         volume = np.transpose(volume, (0, 2, 1))  # Transpose to match NIfTI format
-        nib.save(nib.Nifti1Image(volume, original_affine), 
-                 mask_path)
+        volume = np.rot90(volume, k=2, axes=(1,2))  # Rotate to correct orientation
+        nib.save(nib.Nifti1Image(volume, original_affine), mask_path)
         return mask_path
 
     @staticmethod
@@ -200,32 +198,14 @@ class MaskOperations:
         return np.count_nonzero(mask)
 
     @staticmethod
-    def save_png_mask(mask, file_path, file_name="dense.png"):
-        os.makedirs(file_path, exist_ok=True)
-        rotated_mask = np.rot90(mask)
-        cv2.imwrite(os.path.join(file_path, file_name), rotated_mask)
-
-    @staticmethod
-    def save_png_image(image, file_path, file_name="dense_image.png"):
-        os.makedirs(file_path, exist_ok=True)
-        rotated_image = np.rot90(image)
-        cv2.imwrite(os.path.join(file_path, file_name), rotated_image)
-
-    @staticmethod
-    def save_nii_mask(mask, affine, nb_of_slices, file_path, file_name="dense.nii", image=None, image_file_name="dense_image.nii"):
+    def save_nii_mask(mask, affine, nb_of_slices, file_path, file_name="dense.nii"):
         # transform in a mask of 1's
-        rotated_mask = np.rot90(mask)
+        rotated_mask = np.flip(np.rot90(mask), axis=0)
         mask_3d = np.where(rotated_mask > 0, 1, 0).astype(np.uint8)
         mask_3d = np.repeat(mask_3d[np.newaxis, :, :], nb_of_slices, axis=0)
         mask_3d = np.transpose(mask_3d, (0, 2, 1))
         mask_nii = nib.Nifti1Image(mask_3d, affine)
         nib.save(mask_nii, os.path.join(file_path, file_name))
-        if image is not None:
-            rotated_image = np.rot90(image)
-            image_3d = np.repeat(rotated_image[np.newaxis, :, :], nb_of_slices, axis=0)
-            image_3d = ImageOperations.rearrange_dimensions(image_3d)
-            image_nii = nib.Nifti1Image(image_3d, affine)
-            nib.save(image_nii, os.path.join(file_path, image_file_name))
 
     @staticmethod
     def save_mask_json(points, scale, file_path):
