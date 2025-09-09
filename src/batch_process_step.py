@@ -12,7 +12,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
 from utils import ImageOperations, MaskOperations, ThresholdOperations
 from performance_config import performance_config, get_system_info
-import matplotlib.pyplot as plt
 
 
 # =========================

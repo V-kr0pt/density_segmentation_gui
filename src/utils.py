@@ -1,6 +1,5 @@
 import nibabel as nib
 import pydicom
-import tempfile
 import numpy as np
 from PIL import Image 
 import matplotlib.pyplot as plt
