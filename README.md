@@ -1,7 +1,7 @@
 
 # Density Segmentation GUI
 
-**A beginner-friendly web application for density-based segmentation of medical images (NIfTI format).**
+**An interactive web-based tool for segmenting digital breast tomosynthesis (DBY) images.**
 
 ---
 
