@@ -5,7 +5,9 @@
 import os
 import streamlit as st
 from PIL import Image
-from utils import ImageOperations, MaskOperations
+from new_utils import ImageProcessor
+from utils import  MaskOperations #ImageOperations,
+from ImageLoader import UnifiedImageLoader
 from streamlit_drawable_canvas import st_canvas
 import numpy as np
 
@@ -125,7 +127,12 @@ def batch_draw_step():
         return
 
     # Load image and metadata
-    image, affine, nb_of_slices = ImageOperations.load_image(file_path)
+    #image, affine, nb_of_slices = ImageOperations.load_image(file_path)
+    volume, affine = UnifiedImageLoader.load_image(file_path)
+    nb_of_slices= volume.shape[0]
+    image = volume[volume.shape[0]//2, :, :] # loading the central slice as image
+    print(image.shape)
+    del volume # removing volume to not consume RAM
 
     # Initialize session state for new file
     if "affine" not in st.session_state or st.session_state.get("current_batch_file") != current_file:
@@ -152,12 +159,15 @@ def batch_draw_step():
     # Pad image to avoid edge issues 
     padding = 50
     padded_image = np.pad(image,
-                           pad_width=((padding, padding), (padding, padding), (0, 0)),
+                           pad_width=((padding, padding), (padding, padding)),
                             mode="constant", constant_values=0)
+    padded_image = ImageProcessor.normalize_image(padded_image) 
     
-    pil_width = int(padded_image.shape[1] * scale)
     pil_height = int(padded_image.shape[0] * scale)
+    pil_width = int(padded_image.shape[1] * scale)    
     pil_image = Image.fromarray(padded_image).resize((pil_width, pil_height)).rotate(90, expand=True)
+    
+    
     if "points" not in st.session_state:
         st.session_state.points = []
 
