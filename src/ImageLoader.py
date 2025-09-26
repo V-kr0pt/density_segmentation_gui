@@ -20,7 +20,8 @@ class BaseImageLoader:
             numpy array with dimensions ordered as (slices, width, height) where height > width
         """
         # Find the slice dimension (smallest dimension)
-        slice_dim = np.argmin(data.shape)
+        original_shape = data.shape
+        slice_dim = np.argmin(original_shape)
 
         # Get all three dimension indices
         dims = [0, 1, 2]
@@ -42,8 +43,11 @@ class BaseImageLoader:
         if rearranged_data.shape[2] <= rearranged_data.shape[1]:
             # If still not correct, swap the last two dimensions
             rearranged_data = np.transpose(rearranged_data, (0, 2, 1))
+        
+        if rearranged_data.shape != original_shape:
+            print(f"WARNING: The original shape was changed: before {original_shape} -> now {rearranged_data.shape}.") 
 
-        return rearranged_data
+        return rearranged_data, original_shape
     
     @staticmethod
     def normalize_orientation(image, orientation_rules):
@@ -64,8 +68,8 @@ class NiftiLoader(BaseImageLoader):
             data = img.get_fdata()
         
         # Apply dimension rearrangement to ensure consistent orientation
-        data = BaseImageLoader.rearrange_dimensions(data)
-        return data, img.affine
+        data, original_shape = BaseImageLoader.rearrange_dimensions(data)
+        return data, img.affine, original_shape
 
 class DicomLoader(BaseImageLoader):
     """Specialized loader for DICOM series."""
@@ -85,12 +89,12 @@ class DicomLoader(BaseImageLoader):
         volume = np.stack([d.pixel_array for d in dicoms], axis=0)
         
         # Apply dimension rearrangement
-        volume = BaseImageLoader.rearrange_dimensions(volume)
-        return volume, np.eye(4)  # Return identity matrix as affine for DICOM
+        volume, original_shape = BaseImageLoader.rearrange_dimensions(volume)
+        return volume, np.eye(4), original_shape  # Return identity matrix as affine for DICOM
 
 class UnifiedImageLoader:
     """Unified Interface for all formats"""
-    
+
     @staticmethod
     def load_image(file_path):
         if os.path.isdir(file_path):

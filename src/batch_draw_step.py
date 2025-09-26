@@ -5,8 +5,7 @@
 import os
 import streamlit as st
 from PIL import Image
-from new_utils import ImageProcessor
-from utils import  MaskOperations #ImageOperations,
+from new_utils import ImageProcessor, MaskManager
 from ImageLoader import UnifiedImageLoader
 from streamlit_drawable_canvas import st_canvas
 import numpy as np
@@ -128,10 +127,13 @@ def batch_draw_step():
 
     # Load image and metadata
     #image, affine, nb_of_slices = ImageOperations.load_image(file_path)
-    volume, affine = UnifiedImageLoader.load_image(file_path)
-    nb_of_slices= volume.shape[0]
-    image = volume[volume.shape[0]//2, :, :] # loading the central slice as image
-    print(image.shape)
+    volume, affine, original_shape = UnifiedImageLoader.load_image(file_path)
+    internal_volume_shape = volume.shape 
+    nb_of_slices= internal_volume_shape[0]
+    image = volume[internal_volume_shape[0]//2, :, :] # loading the central slice as image
+    print(f"original shape:{original_shape}")
+    print(f"internal_volume_shape:{internal_volume_shape}")
+    print(f"image shape: {image.shape}")
     del volume # removing volume to not consume RAM
 
     # Initialize session state for new file
@@ -166,7 +168,6 @@ def batch_draw_step():
     pil_height = int(padded_image.shape[0] * scale)
     pil_width = int(padded_image.shape[1] * scale)    
     pil_image = Image.fromarray(padded_image).resize((pil_width, pil_height)).rotate(90, expand=True)
-    
     
     if "points" not in st.session_state:
         st.session_state.points = []
@@ -238,7 +239,7 @@ def batch_draw_step():
     # =========================
     if st.session_state.get("create_mask", False):
         if "polygons" in st.session_state and len(st.session_state.polygons) > 0:
-            result, combined_mask = MaskOperations.create_combined_mask(image, st.session_state.polygons, scale)
+            result, combined_mask = MaskManager.create_combined_mask(image, st.session_state.polygons, scale)
             st.session_state["mask"] = combined_mask
             st.session_state["result"] = result
             st.session_state["output_path"] = os.path.join(os.getcwd(), 'output', current_file_name)
@@ -254,23 +255,28 @@ def batch_draw_step():
     if "result" in st.session_state and "mask" in st.session_state:
         st.markdown("### 👁️ Mask Preview")
         col1, col2 = st.columns(2)
+
+        present_img = ImageProcessor.normalize_image(np.rot90(image))
+        present_result = ImageProcessor.normalize_image(np.rot90(st.session_state["result"]))
+
         with col1:
-            st.image(np.rot90(image), caption="Original Image", use_container_width=True)
+            st.image(present_img, caption="Original Image", use_container_width=True)
         with col2:
-            st.image(np.rot90(st.session_state["result"]), caption="Segmented Area", use_container_width=True)
+            st.image(present_result, caption="Segmented Area", use_container_width=True)
 
         col1, col2, col3 = st.columns([1, 1, 1])
         with col2:
             if st.button("💾 Save Mask & Continue", type="primary"):
                 # Save mask exactly as drawn, no rotation or transformation
-                MaskOperations.save_mask(
-                    st.session_state["mask"],
-                    affine=st.session_state["affine"],
-                    nb_of_slices=st.session_state["nb_of_slices"],
-                    file_path=st.session_state["output_path"],
-                    points=st.session_state["points"],
-                    scale=st.session_state["scale"]
-                )
+                _ = MaskManager.save_mask(
+                        mask=st.session_state["mask"],
+                        original_shape=original_shape,
+                        nb_of_slices=st.session_state["nb_of_slices"],
+                        affine=st.session_state["affine"],
+                        file_path=st.session_state["output_path"],
+                        #points=st.session_state["points"], in old version we save a .json file with the points and scale info
+                        #scale=st.session_state["scale"]
+                    )
                 # Mark file as completed
                 st.session_state["batch_completed_files"]["draw"].append(current_file_name)
                 # Move to next file
