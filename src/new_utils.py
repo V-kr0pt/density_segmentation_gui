@@ -1,4 +1,5 @@
 import numpy as np
+from PIL import Image
 import nibabel as nib
 import os
 import cv2
@@ -6,20 +7,6 @@ from ImageLoader import BaseImageLoader
 import matplotlib.pyplot as plt
 import nibabel as nib
 
-class OrientationConfig:
-    """Define regras consistentes para orientação da imagem"""
-    
-    STANDARD_NIFTI = {
-        'rotation': 90,
-        'flip_axes': [0],  # flip vertical
-        'k': 1
-    }
-    
-    STANDARD_DICOM = {
-        'rotation': -90,
-        'flip_axes': [0, 1],  # flip vertical e horizontal
-        'k': -1
-    }
 
 class ImageProcessor:
     """Operações de processamento de imagem"""
@@ -141,6 +128,122 @@ class MaskManager:
         result = cv2.bitwise_and(image, image, mask=combined_mask)
         return result, combined_mask
     
+    @staticmethod
+    def measure_mask_area(mask):
+        ''' 
+            Return mask non zeros
+        '''
+        return np.count_nonzero(mask)
+    
+    @staticmethod 
+    
+    def create_final_mask(folder_path, original_shape, original_affine):
+        """
+        Creates a 3D NIfTI mask from PNG images with dimension matching.
+
+        Before stacking PNG slices, identifies the slice dimension in the original volume
+        and ensures proper orientation by comparing spatial dimensions.
+        """
+        mask_path = os.path.join(folder_path, 'mask.nii')
+
+        # Load and sort NPY files
+        npy_files = [f for f in os.listdir(folder_path) if f.endswith('.npy')]
+        if not npy_files:
+            raise FileNotFoundError(f"No NPY files found in {folder_path}")
+
+        images = []
+        for f in npy_files:
+            array = np.load(os.path.join(folder_path, f))
+            images.append(array)
+
+        print(f"Loaded {len(images)} PNG slices")
+        print(f"Original shape: {original_shape}")
+        print(f"PNG image shape: {images[0].shape}")
+
+        # Identify slice dimension in original volume (smallest dimension)
+        slice_dim = np.argmin(original_shape)
+        num_slices_original = original_shape[slice_dim]
+        num_slices_png = len(images)
+
+        assert num_slices_png == num_slices_original, "Something wrong happened: The number of .png files is diferent from the number of slices in original volume image."
+
+
+        # Get spatial dimensions from original volume (the two non-slice dimensions)
+        spatial_dims = [i for i in range(3) if i != slice_dim]
+        original_spatial_shape = (original_shape[spatial_dims[0]], original_shape[spatial_dims[1]])
+
+        print(f"Original spatial dimensions: {original_spatial_shape}")
+        print(f"Numpy spatial dimensions: {images[0].shape}")
+
+        # Stack with proper orientation
+        volume = MaskManager._stack_arrays_preserving_orientation(images, original_shape)
+
+        print(f"Final volume shape: {volume.shape}")
+        print(f"Target shape: {original_shape}")
+        
+        # Convert to binary (0 and 1)
+        volume_binary = (volume > 0).astype(np.uint8)
+        
+        # Save NIfTI
+        mask_nii = nib.Nifti1Image(volume_binary, original_affine)
+        nib.save(mask_nii, mask_path)        
+        print(f"Mask successfully saved to {mask_path}")
+
+        # removing numpy files after mask creation
+        removed_count=0
+        for npy_file in npy_files:
+            try:
+                file_path = os.path.join(folder_path, npy_file)
+                os.remove(file_path)
+                removed_count += 1
+                print(f"Removed: {npy_file}")
+            except Exception as e:
+                print(f"Error removing {npy_file}: {e}")
+
+        return mask_path
+        
+
+    @staticmethod
+    def _stack_arrays_preserving_orientation(arrays, original_shape):
+        """
+        Stacks 2D arrays into 3D volume while preserving original orientation.
+        Assumes arrays are in the same orientation as original slices.
+        """
+        # Identify slice dimension
+        slice_dim = np.argmin(original_shape)
+
+        # Stack along the slice dimension
+        if slice_dim == 0:
+            volume = np.stack(arrays, axis=0)
+        elif slice_dim == 1:
+            volume = np.stack(arrays, axis=1)
+        else:  # slice_dim == 2
+            volume = np.stack(arrays, axis=2)
+
+        # Verify dimensions match
+        if volume.shape != original_shape:
+            print(f"Warning: Stacked shape {volume.shape} doesn't match original {original_shape}")
+            # Apply minimal transformations to match
+            volume = MaskManager._match_volume_dimensions(volume, original_shape)
+
+        return volume
+
+    @staticmethod
+    def _match_volume_dimensions(volume, target_shape):
+        """
+        Applies minimal transformations to match target dimensions.
+        """
+        # Simple transpose if dimensions are swapped
+        if (volume.shape[0] == target_shape[1] and 
+            volume.shape[1] == target_shape[0] and 
+            volume.shape[2] == target_shape[2]):
+            return np.transpose(volume, (1, 0, 2))
+        elif (volume.shape[0] == target_shape[0] and 
+              volume.shape[1] == target_shape[2] and 
+              volume.shape[2] == target_shape[1]):
+            return np.transpose(volume, (0, 2, 1))
+
+        return volume  # Return as-is if no simple transformation works
     
     @staticmethod
     def save_mask(mask, original_shape, nb_of_slices, affine, file_path, file_name="dense.nii"):
@@ -299,3 +402,23 @@ class ThresholdOperator:
                color='white', fontsize=16)
         ax.axis('off')
         return fig
+    
+    @staticmethod
+    def adjust_slice_threshold(image_slice, mask_slice, target_area):
+        threshold = 0.8
+        step = 0.01
+        best_threshold = threshold
+        best_diff = float('inf')
+
+        while threshold >= 0:
+            thresholded_image = ThresholdOperator.threshold_slice(image_slice, mask_slice, threshold)
+            area = MaskManager.measure_mask_area(thresholded_image)
+            diff = abs(area - target_area)
+
+            if diff < best_diff:
+                best_diff = diff
+                best_threshold = threshold
+
+            threshold -= step
+
+        return best_threshold, ThresholdOperator.threshold_slice(image_slice, mask_slice, best_threshold)

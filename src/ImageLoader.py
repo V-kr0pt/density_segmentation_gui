@@ -87,23 +87,23 @@ class NiftiLoader(BaseImageLoader):
         img = nib.load(file_path)
         
         # Get volume shape without loading data
-        shape = img.shape
-        if len(shape) == 2:
+        original_shape = img.shape
+        if len(original_shape) == 2:
             # Already 2D, just load and return
             slice_data = img.get_fdata()
-            slice_data, original_shape = BaseImageLoader.rearrange_dimensions(slice_data[np.newaxis, ...])
+            slice_data, _ = BaseImageLoader.rearrange_dimensions(slice_data[np.newaxis, ...])
             slice_data = slice_data[0]  # Remove singleton dimension
             return slice_data, img.affine, original_shape, 0
         
         # For 3D/4D volumes, determine slice dimension and index
-        rearranged_shape, slice_dim = NiftiLoader._predict_slice_dimension(shape)
+        rearranged_shape, slice_dim = NiftiLoader._predict_slice_dimension(original_shape)
         
         # Calculate central slice if not specified
         if slice_index is None:
             slice_index = rearranged_shape[slice_dim] // 2
         
         # Load only the required slice using memory mapping
-        if len(shape) == 3:
+        if len(original_shape) == 3:
             # 3D volume - use direct indexing with memory mapping
             if slice_dim == 0:
                 slice_data = img.dataobj[slice_index, :, :]
@@ -117,7 +117,7 @@ class NiftiLoader(BaseImageLoader):
         
         # Apply dimension rearrangement to 2D slice
         slice_2d = slice_data[np.newaxis, ...]  # Add batch dimension
-        rearranged, original_shape = BaseImageLoader.rearrange_dimensions(slice_2d)
+        rearranged, _ = BaseImageLoader.rearrange_dimensions(slice_2d)
         slice_data = rearranged[0]  # Remove batch dimension
         print(f"slice_data dim:{slice_data.shape}")
         return slice_data, img.affine, original_shape, slice_index
