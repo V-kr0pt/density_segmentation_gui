@@ -1,9 +1,12 @@
 import os
 import io
 import json
+import numpy as np
 import matplotlib.pyplot as plt
 import streamlit as st
+from ImageLoader import UnifiedImageLoader
 from utils import ImageOperations, ThresholdOperations
+from new_utils import ThresholdOperator, ImageProcessor
 
 
 # =============================
@@ -152,8 +155,10 @@ def batch_threshold_step():
         return
 
     try:
-        img = ImageOperations.load_central_slice_any(original_image_path)
-        msk = ImageOperations.load_nii_central_slice(mask_path)
+        img, _, _, _ = UnifiedImageLoader.load_slice(original_image_path)
+        img_show = np.rot90(ImageProcessor.normalize_image(img)) # to show on GUI
+        msk, _, _, _ = UnifiedImageLoader.load_slice(mask_path)
+        msk_show = np.rot90(msk)
     except Exception as e:
         st.error(f"Error loading images: {str(e)}")
         if st.button("Skip this file"):
@@ -227,7 +232,7 @@ def batch_threshold_step():
         with img_col1:
             st.markdown("**Original Image**")
             fig_raw, ax_raw = plt.subplots(figsize=(16, 16))
-            ax_raw.imshow(img, cmap='gray')
+            ax_raw.imshow(img_show, cmap='gray')
             ax_raw.axis('off')
             buf_raw = io.BytesIO()
             fig_raw.savefig(buf_raw, format='png', bbox_inches='tight', pad_inches=0.05, 
@@ -239,7 +244,7 @@ def batch_threshold_step():
         with img_col2:
             st.markdown("**Thresholded Result**")
             # Display thresholded image
-            fig_thresh = ThresholdOperations.display_thresholded_slice(img, msk, threshold)
+            fig_thresh = ThresholdOperator.display_thresholded_slice(img_show, msk_show, threshold)
             fig_thresh.set_size_inches(16, 16)
             buf_thresh = io.BytesIO()
             fig_thresh.savefig(buf_thresh, format='png', bbox_inches='tight', pad_inches=0.05, dpi=300)
@@ -252,7 +257,7 @@ def batch_threshold_step():
         # Center the image
         img_display_col1, img_display_col2, img_display_col3 = st.columns([1, 2, 1])
         with img_display_col2:
-            fig = ThresholdOperations.display_thresholded_slice(img, msk, threshold)
+            fig = ThresholdOperator.display_thresholded_slice(img_show, msk_show, threshold)
             fig.set_size_inches(16, 16)
             buf = io.BytesIO()
             fig.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.05, dpi=300)

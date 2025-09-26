@@ -10,7 +10,8 @@ import numpy as np
 import streamlit as st
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
-from utils import ImageOperations, MaskOperations, ThresholdOperations
+from ImageLoader import UnifiedImageLoader
+from new_utils import ThresholdOperator, MaskManager
 from performance_config import performance_config, get_system_info
 
 
@@ -70,12 +71,10 @@ class BatchProcessingManager:
                 raise FileNotFoundError(f"Mask not found: {mask_path}")
             
             # Load data and calculate target area
-            _, original_affine, num_slices = ImageOperations.load_image(original_image_path)
-            middle_slice_index = num_slices // 2
-            middle_image_slice = ImageOperations.load_any_slice(original_image_path, middle_slice_index)
-            middle_mask_slice = ImageOperations.load_nii_slice(mask_path, middle_slice_index)
-            thresholded_img = ThresholdOperations.threshold_image(middle_image_slice, middle_mask_slice, T)
-            target_area = MaskOperations.measure_mask_area(thresholded_img)
+            middle_image_slice, original_affine, original_shape, slice_index = UnifiedImageLoader.load_slice(original_image_path)
+            middle_mask_slice, _, _, _ = UnifiedImageLoader.load_slice(mask_path)
+            thresholded_img = ThresholdOperator.threshold_slice(middle_image_slice, middle_mask_slice, T)
+            target_area = MaskManager.measure_mask_area(thresholded_img)
             
             # Clean output directory
             if os.path.exists(save_dir):
@@ -84,13 +83,18 @@ class BatchProcessingManager:
             os.makedirs(save_dir, exist_ok=True)
             
             # Process all slices with optimized chunking
+            num_slices = slice_index*2
+            if not num_slices in original_shape:
+                num_slices+=1
+                assert num_slices in original_shape, f"num_slices {num_slices} not in original_shape {original_shape}"
+            
             slice_results = self._process_slices_optimized(
                 original_image_path, mask_path, save_dir, 
-                target_area, num_slices, file_name
+                target_area, num_slices
             )
             
             # Create NIfTI file
-            nifti_path = MaskOperations.create_mask_nifti(save_dir, original_affine)
+            nifti_path = MaskManager.create_final_mask(save_dir, original_shape, original_affine)
             
             return {
                 'success': True,
@@ -112,7 +116,7 @@ class BatchProcessingManager:
             }
     
     def _process_slices_optimized(self, original_image_path, mask_path, save_dir, 
-                                 target_area, num_slices, file_name):
+                                 target_area, num_slices):
         """
         Process slices with optimized chunking and memory management.
         """
@@ -129,40 +133,47 @@ class BatchProcessingManager:
             
             # Process current chunk
             for slice_index in range(start_idx, end_idx):
-                try:
-                    # Load slice data with lazy loading
-                    image_slice = ImageOperations.load_any_slice(original_image_path, slice_index)
-                    mask_slice = ImageOperations.load_nii_slice(mask_path, slice_index)
+                
+                # Load slice data with lazy loading
+                image_slice, _, _, _ = UnifiedImageLoader.load_slice(original_image_path, slice_index)
+                mask_slice, _, _, _ = UnifiedImageLoader.load_slice(mask_path, slice_index)
+
+                # Apply dynamic threshold adjustment
+                adjusted_threshold, thresholded_image =\
+                        ThresholdOperator.adjust_slice_threshold(image_slice,
+                                                                mask_slice,
+                                                                    target_area)
+
+                # Create image (transform 1 in 255) and save
+                binary_image = np.where(thresholded_image > 0, 255, 0).astype(np.uint8)
+                filename = f'slice_{slice_index}_threshold_{adjusted_threshold:.2f}.png'
+                filepath = os.path.join(save_dir, filename)
+
+                # Saving unmodified numpy file
+                npy_filename = f'slice_{slice_index}_threshold_{adjusted_threshold:.2f}.npy'
+                npy_filepath = os.path.join(save_dir, npy_filename)
+                np.save(npy_filepath, binary_image)
+                
+                # Optimized saving with compression
+                # Saving .png image with corrections
+                binary_img_pil = np.flip(np.rot90(binary_image, k=1), axis=1)
+                img_pil = Image.fromarray(binary_img_pil, mode='L')
+                img_pil.save(filepath, optimize=True, compress_level=compression_level)
+
+                total_processed += 1
+
+                # Memory management
+                with self.memory_lock:
+                    self.operations_count += 1
+                    if self.operations_count % gc_frequency == 0:
+                        gc.collect()
+
+                # Clean up large variables
+                del image_slice, mask_slice, thresholded_image, binary_image
                     
-                    # Apply dynamic threshold adjustment
-                    adjusted_threshold, thresholded_image = ThresholdOperations.adjust_threshold(
-                        image_slice, mask_slice, target_area, slice_index
-                    )
-                    
-                    # Create binary image and save
-                    binary_image = np.where(thresholded_image > 0, 255, 0).astype(np.uint8)
-                    filename = f'slice_{slice_index}_threshold_{adjusted_threshold:.4f}.png'
-                    filepath = os.path.join(save_dir, filename)
-                    
-                    # Optimized saving with compression
-                    binary_img_pil = np.flip(np.rot90(binary_image, k=1), axis=1)
-                    img_pil = Image.fromarray(binary_img_pil, mode='L')
-                    img_pil.save(filepath, optimize=True, compress_level=compression_level)
-                    
-                    total_processed += 1
-                    
-                    # Memory management
-                    with self.memory_lock:
-                        self.operations_count += 1
-                        if self.operations_count % gc_frequency == 0:
-                            gc.collect()
-                    
-                    # Clean up large variables
-                    del image_slice, mask_slice, thresholded_image, binary_image
-                    
-                except Exception as e:
-                    # Log slice-specific error
-                    continue
+                #except Exception as e:
+                #    # Log slice-specific error
+                #    continue
         
         return total_processed
     
