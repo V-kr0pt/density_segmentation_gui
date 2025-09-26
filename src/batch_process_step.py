@@ -137,8 +137,6 @@ class BatchProcessingManager:
                 # Load slice data with lazy loading
                 image_slice, _, _, _ = UnifiedImageLoader.load_slice(original_image_path, slice_index)
                 mask_slice, _, _, _ = UnifiedImageLoader.load_slice(mask_path, slice_index)
-                print(type(image_slice))
-                print(type(mask_slice))
 
                 # Apply dynamic threshold adjustment
                 adjusted_threshold, thresholded_image =\
