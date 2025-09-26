@@ -7,8 +7,7 @@ import nibabel as nib
 
 
 class ImageProcessor:
-    """Operações de processamento de imagem"""
-    # Normalização, filtros, etc.
+    """Image processing operations"""
     @staticmethod
     def normalize_image(img):
         """
@@ -27,8 +26,7 @@ class ImageProcessor:
         return (data - mn) / (mx - mn)
 
 class MaskManager:
-    """Operações específicas de máscara"""
-    # Criação, manipulação, salvamento de máscaras
+    """Mask-specific operations"""
     @staticmethod
     def create_mask(image, points, reduction_scale=1.0):
         """
