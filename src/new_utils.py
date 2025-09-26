@@ -1,9 +1,7 @@
 import numpy as np
-from PIL import Image
 import nibabel as nib
 import os
 import cv2
-from ImageLoader import BaseImageLoader
 import matplotlib.pyplot as plt
 import nibabel as nib
 
