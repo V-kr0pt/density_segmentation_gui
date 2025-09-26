@@ -3,6 +3,7 @@ import nibabel as nib
 import os
 import cv2
 from ImageLoader import BaseImageLoader
+import matplotlib.pyplot as plt
 import nibabel as nib
 
 class OrientationConfig:
@@ -25,9 +26,20 @@ class ImageProcessor:
     # Normalização, filtros, etc.
     @staticmethod
     def normalize_image(img):
+        """
+            Return the image in 0-255 range
+        """
         img = img - np.min(img)
         img = img / (np.max(img) + 1e-8)
         return (img * 255).astype(np.uint8)
+    
+    @staticmethod
+    def normalize_data(data):
+        """
+            Return data in 0-1 range
+        """
+        mn, mx = data.min(), data.max()
+        return (data - mn) / (mx - mn)
 
 class MaskManager:
     """Operações específicas de máscara"""
@@ -265,5 +277,25 @@ class MaskManager:
         return cv2.resize(mask_2d.astype(np.float32), (target_width, target_height)).astype(np.uint8)
 
 class ThresholdOperator:
-    """Operações de thresholding"""
-    # Aplicação e ajuste de thresholds
+    @staticmethod
+    def apply_threshold(image, mask, threshold):
+        norm_image = ImageProcessor.normalize_data(image)
+        return (norm_image > threshold) & (mask > 0)
+
+    @staticmethod
+    def threshold_slice(img, mask, threshold):
+        bin_mask = ThresholdOperator.apply_threshold(img, mask, threshold)
+        return bin_mask
+    
+    @staticmethod
+    def display_thresholded_slice(img, mask, threshold):
+        bin_mask = ThresholdOperator.threshold_slice(img, mask, threshold)
+        fig, ax = plt.subplots(figsize=(8, 8))
+        ax.imshow(img, cmap='gray')
+        ax.imshow(bin_mask, cmap='jet', alpha=0.2)
+        ax.text(0.5, 0.05, f'Threshold: {threshold:.3f}',
+               ha='center', va='center',
+               transform=ax.transAxes,
+               color='white', fontsize=16)
+        ax.axis('off')
+        return fig
