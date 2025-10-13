@@ -179,6 +179,9 @@ class MaskManager:
         
         # Convert to binary (0 and 1)
         volume_binary = (volume > 0).astype(np.uint8)
+
+        # --- FIX: correct flipped orientation (Z-axis flip) ---
+        volume_binary = np.flip(volume_binary, axis=2)
         
         # Save NIfTI
         mask_nii = nib.Nifti1Image(volume_binary, original_affine)
