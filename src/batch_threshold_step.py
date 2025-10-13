@@ -182,14 +182,14 @@ def batch_threshold_step():
             st.markdown("**Threshold Value**")
             threshold_key = f"threshold_number_{current_file_name}"
             saved_thresholds = st.session_state.get("batch_thresholds", {})
-            default_threshold = saved_thresholds.get(current_file_name, 0.380)
+            default_threshold = saved_thresholds.get(current_file_name, 0.38)
             threshold = st.number_input(
                 "Threshold",
                 min_value=0.0,
                 max_value=1.0,
                 value=default_threshold,
                 step=0.001,
-                format="%.3f",
+                format="%.2f",
                 key=threshold_key,
                 help="Lower = more inclusive, Higher = more selective",
                 label_visibility="collapsed"
@@ -281,7 +281,7 @@ def batch_threshold_step():
                     json.dump({"threshold": threshold}, f)
                 st.session_state["batch_completed_files"]["threshold"].append(current_file_name)
                 st.session_state["batch_current_index"] = current_index + 1
-                st.success(f"Threshold {threshold:.3f} saved successfully!")
+                st.success(f"Threshold {threshold:.2f} saved successfully!")
             except Exception as e:
                 st.error(f"Could not save threshold: {e}")
             st.rerun()
@@ -299,4 +299,4 @@ def batch_threshold_step():
             cols = st.columns(3)
             for i, (file_name, thresh) in enumerate(st.session_state["batch_final_thresholds"].items()):
                 with cols[i % 3]:
-                    st.metric(f"{file_name}", f"{thresh:.3f}")
+                    st.metric(f"{file_name}", f"{thresh:.2f}")
