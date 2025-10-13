@@ -5,7 +5,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import streamlit as st
 from ImageLoader import UnifiedImageLoader
-from utils import ImageOperations, ThresholdOperations
 from new_utils import ThresholdOperator, ImageProcessor
 
 
