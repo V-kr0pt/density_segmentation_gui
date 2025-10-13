@@ -259,7 +259,16 @@ def batch_process_step():
     # =========================
     # Input Folder Setup
     # =========================
-    input_folder = os.path.join(os.getcwd(), 'media')
+    # Use the main input folder selected in Step 1
+    input_folder = st.session_state.get("main_input_folder", os.path.join(os.getcwd(), "media"))
+
+    if not os.path.exists(input_folder):
+        st.error(f"The selected main input folder does not exist: {input_folder}")
+        if st.button("← Back to File Selection"):
+            st.session_state["current_step"] = "file_selection"
+            st.rerun()
+        return
+
 
     # =========================
     # Batch Data Validation

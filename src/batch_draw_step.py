@@ -119,8 +119,13 @@ def batch_draw_step():
     # =========================
     # File Loading & Preparation
     # =========================
-    input_folder = os.path.join(os.getcwd(), 'media')
+    # Use the selected main input folder from session_state
+    input_folder = st.session_state.get("main_input_folder", os.path.join(os.getcwd(), "media"))
     file_path = os.path.join(input_folder, current_file)
+
+    if not os.path.exists(input_folder):
+        st.error(f"The selected main input folder does not exist: {input_folder}")
+        return
     if not os.path.exists(file_path):
         st.error(f"File not found: {file_path}")
         return

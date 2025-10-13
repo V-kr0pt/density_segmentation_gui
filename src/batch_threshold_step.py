@@ -8,10 +8,6 @@ from ImageLoader import UnifiedImageLoader
 from new_utils import ThresholdOperator, ImageProcessor
 
 
-# =============================
-# Imports
-# =============================
-
 def batch_threshold_step():
     """
     Step 3: Batch threshold adjustment for all files.
@@ -137,10 +133,16 @@ def batch_threshold_step():
     # =====================================================
     # File paths for current file 
     # =====================================================
-    input_folder = os.path.join(os.getcwd(), 'media')
-    output_path = os.path.join(os.getcwd(), 'output', current_file_name)
-    mask_path = os.path.join(output_path, 'dense.nii')
+    # Use main input folder selected in Step 1
+    input_folder = st.session_state.get("main_input_folder", os.path.join(os.getcwd(), "media"))
+    output_path = os.path.join(os.getcwd(), "output", current_file_name)
+    mask_path = os.path.join(output_path, "dense.nii")
     original_image_path = os.path.join(input_folder, current_file)
+
+    if not os.path.exists(input_folder):
+        st.error(f"The selected main input folder does not exist: {input_folder}")
+        return
+
 
     # =====================================================
     # File existence and image loading 

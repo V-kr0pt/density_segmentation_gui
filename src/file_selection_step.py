@@ -25,8 +25,24 @@ def file_selection_step():
     </div>
     """, unsafe_allow_html=True)
 
-    # --- Define Input/Output Folders ---
-    input_folder = os.path.join(os.getcwd(), 'media')
+    # --- Main input folder selection ---
+    default_input = os.path.join(os.getcwd(), "media")
+    selected_input = st.text_input(
+        "Main Input Folder",
+        value=st.session_state.get("main_input_folder", default_input),
+        help="Root folder containing your files or patient subfolders (e.g., media/patient_1)"
+    )
+
+    if selected_input.strip() == "":
+        st.warning("Please provide a valid input folder path.")
+        return
+    if not os.path.exists(selected_input):
+        st.error(f"The selected folder does not exist: {selected_input}")
+        return
+
+    st.session_state["main_input_folder"] = selected_input
+
+    input_folder = st.session_state["main_input_folder"]
     output_folder = os.path.join(os.getcwd(), 'output')
 
     # =============================
