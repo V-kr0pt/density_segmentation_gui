@@ -180,20 +180,29 @@ def batch_threshold_step():
         
         with config_col1:
             st.markdown("**Threshold Value**")
-            threshold_key = f"threshold_number_{current_file_name}"
-            saved_thresholds = st.session_state.get("batch_thresholds", {})
-            default_threshold = saved_thresholds.get(current_file_name, 0.38)
+            
+            # Update the session state immediately when the threshold value changes
+            if "batch_thresholds" not in st.session_state:
+                st.session_state["batch_thresholds"] = {}
+
+            # Update the session state directly when the number input changes
+            def update_threshold():
+                st.session_state["batch_thresholds"][current_file_name] = st.session_state[f"input_{current_file_name}"]
+
             threshold = st.number_input(
                 "Threshold",
                 min_value=0.0,
                 max_value=1.0,
-                value=default_threshold,
-                step=0.001,
+                value=float(st.session_state["batch_thresholds"].get(current_file_name, 0.38)),
+                step=0.01,
                 format="%.2f",
-                key=threshold_key,
+                key=f"input_{current_file_name}",
                 help="Lower = more inclusive, Higher = more selective",
-                label_visibility="collapsed"
+                label_visibility="collapsed",
+                on_change=update_threshold
             )
+            
+            st.session_state["batch_thresholds"][current_file_name] = threshold
             
         with config_col2:
             st.markdown("**View Options**")
@@ -209,19 +218,21 @@ def batch_threshold_step():
             width_key = "last_selected_width_index"
             default_index = st.session_state.get(width_key, 4)
             
+            # Update session state immediately when width changes
+            def update_width():
+                st.session_state[width_key] = width_options.index(st.session_state[f"width_{current_file}"])
+            
             selected_width = st.selectbox("Width", width_options, index=default_index, 
                                         key=f"width_{current_file}", 
-                                        label_visibility="collapsed")
-            
-            # Save the selected index to session state for future use
-            st.session_state[width_key] = width_options.index(selected_width)
+                                        label_visibility="collapsed",
+                                        on_change=update_width)
         
         st.markdown('</div>', unsafe_allow_html=True)
 
     # Update session state
-    if "batch_thresholds" not in st.session_state:
-        st.session_state["batch_thresholds"] = {}
-    st.session_state["batch_thresholds"][current_file_name] = threshold
+    #if "batch_thresholds" not in st.session_state:
+        #st.session_state["batch_thresholds"] = {}
+    #st.session_state["batch_thresholds"][current_file_name] = threshold
 
     # Image preview section
     st.markdown("### Image Preview")
