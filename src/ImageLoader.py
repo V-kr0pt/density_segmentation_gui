@@ -211,6 +211,154 @@ class DicomLoader(BaseImageLoader):
         
         return slice_data, np.eye(4), original_shape, slice_index
 
+    @staticmethod
+    def load_single_file(file_path):
+        """
+        Loads a single DICOM file (either 2D slice or multi-frame volume).
+
+        Args:
+            file_path (str): Path to a DICOM file (.dcm, .dicom)
+
+        Returns:
+            tuple: (volume, affine, original_shape)
+                - volume: np.ndarray (after rearrange_dimensions)
+                - affine: np.ndarray (4x4) - identity for now
+                - original_shape: tuple (before rearrange_dimensions)
+        """
+        if not os.path.isfile(file_path):
+            raise FileNotFoundError(f"DICOM file not found: {file_path}")
+
+        if not file_path.lower().endswith((".dcm", ".dicom")):
+            raise ValueError(f"Not a DICOM file extension: {file_path}")
+
+        ds = pydicom.dcmread(file_path)
+
+        # Some DICOMs can be missing pixel data (e.g., RTSTRUCT, SR, etc.)
+        if "PixelData" not in ds:
+            raise ValueError(f"DICOM has no PixelData (not an image): {file_path}")
+
+        arr = ds.pixel_array  # may be 2D, 3D (multiframe), or sometimes 4D (rare)
+
+        # Normalize to a 3D "volume-like" array: (Z, Y, X)
+        print(f"The DICOM dim: {arr.ndim}")
+        if arr.ndim == 2:
+            volume = arr[np.newaxis, ...]  # (1, H, W)
+        elif arr.ndim == 3:
+            # Typically (n_frames, H, W) for multiframe
+            volume = arr
+        elif arr.ndim == 4:
+            # Some modalities/encodings can yield (n_frames, H, W, channels)
+            # For medical grayscale data, channels is often 1; handle conservatively:
+            if arr.shape[-1] == 1:
+                volume = arr[..., 0]
+            else:
+                raise ValueError(
+                    f"Unsupported 4D DICOM pixel array shape {arr.shape} in {file_path}. "
+                    "If this is RGB, you'll need a policy (e.g., convert to grayscale or keep channels)."
+                )
+        else:
+            raise ValueError(f"Unsupported DICOM pixel array ndim={arr.ndim} for file {file_path}")
+
+        volume = volume.astype(np.float32)
+
+        original_shape = volume.shape  # (Z, Y, X) before rearrange
+        volume, _ = BaseImageLoader.rearrange_dimensions(volume)
+
+        # TODO: If you want a real affine, you can compute it from:
+        # ImagePositionPatient, ImageOrientationPatient, PixelSpacing, SliceThickness/SpacingBetweenSlices
+        affine = np.eye(4, dtype=np.float32)
+
+        return volume, affine, original_shape
+
+    @staticmethod
+    def load_single_slice(file_path, slice_index=None):
+        """
+        Load a slice from a single DICOM file.
+        Works for:
+          - 2D single-slice DICOM  -> returns that slice (index 0)
+          - multi-frame DICOM (3D) -> returns selected frame
+
+        Returns:
+            (slice_data, affine, original_shape, slice_index_used)
+        """
+        if not os.path.isfile(file_path):
+            raise FileNotFoundError(f"DICOM file not found: {file_path}")
+
+        if not file_path.lower().endswith((".dcm", ".dicom")):
+            raise ValueError(f"Not a DICOM file extension: {file_path}")
+
+        ds = pydicom.dcmread(file_path)
+
+        if "PixelData" not in ds:
+            raise ValueError(f"DICOM has no PixelData (not an image): {file_path}")
+
+        arr = ds.pixel_array
+
+        # Case A: single 2D image
+        if arr.ndim == 2:
+            # Only one "slice" exists
+            if slice_index is None:
+                slice_index_used = 0
+            else:
+                if slice_index != 0:
+                    raise ValueError(
+                        f"slice_index={slice_index} invalid for 2D single-file DICOM. Use 0."
+                    )
+                slice_index_used = slice_index
+
+            slice_data = arr.astype(np.float32)
+            original_shape = (1, slice_data.shape[0], slice_data.shape[1])  # (Z=1, H, W)
+
+            # Use your rearrange pipeline (expects 3D)
+            volume_like = slice_data[np.newaxis, ...]  # (1, H, W)
+            rearranged, _ = BaseImageLoader.rearrange_dimensions(volume_like)
+            slice_data = rearranged[0]
+
+            return slice_data, np.eye(4, dtype=np.float32), original_shape, slice_index_used
+
+        # Case B: multi-frame (typically (n_frames, H, W))
+        if arr.ndim == 3:
+            n_frames = arr.shape[0]
+
+            if slice_index is None:
+                slice_index_used = n_frames // 2
+            else:
+                if slice_index < 0 or slice_index >= n_frames:
+                    raise ValueError(
+                        f"Slice index {slice_index} out of range. File has {n_frames} frames."
+                    )
+                slice_index_used = slice_index
+
+            frame = arr[slice_index_used].astype(np.float32)  # (H, W)
+            original_shape = (n_frames, frame.shape[0], frame.shape[1])
+
+            volume_like = frame[np.newaxis, ...]  # (1, H, W)
+            rearranged, _ = BaseImageLoader.rearrange_dimensions(volume_like)
+            slice_data = rearranged[0]
+
+            return slice_data, np.eye(4, dtype=np.float32), original_shape, slice_index_used
+
+        # Optional: handle 4D (rare)
+        if arr.ndim == 4 and arr.shape[-1] == 1:
+            arr = arr[..., 0]
+            # then treat as 3D above
+            n_frames = arr.shape[0]
+            slice_index_used = n_frames // 2 if slice_index is None else slice_index
+            if slice_index_used < 0 or slice_index_used >= n_frames:
+                raise ValueError(f"Slice index {slice_index_used} out of range. File has {n_frames} frames.")
+            frame = arr[slice_index_used].astype(np.float32)
+            original_shape = (n_frames, frame.shape[0], frame.shape[1])
+
+            volume_like = frame[np.newaxis, ...]
+            rearranged, _ = BaseImageLoader.rearrange_dimensions(volume_like)
+            slice_data = rearranged[0]
+
+            return slice_data, np.eye(4, dtype=np.float32), original_shape, slice_index_used
+
+        raise ValueError(f"Unsupported DICOM pixel array ndim={arr.ndim} for file {file_path}")
+
+    
+
 class UnifiedImageLoader:
     """Unified Interface for all formats"""
 
@@ -218,10 +366,12 @@ class UnifiedImageLoader:
     def load_image(file_path):
         if os.path.isdir(file_path):
             return DicomLoader.load_series(file_path)
+        elif file_path.lower().endswith(('.dcm', '.dicom')):
+            return DicomLoader.load_single_file(file_path)
         elif file_path.lower().endswith(('.nii', '.nii.gz')):
             return NiftiLoader.load_volume(file_path)
         else:
-            raise ValueError(f"Formato não suportado: {file_path}")
+            raise ValueError(f"Format is not supported: {file_path}")
         
     @staticmethod
     def load_slice(file_path, slice_index=None):
@@ -238,7 +388,9 @@ class UnifiedImageLoader:
         """
         if os.path.isdir(file_path):
             return DicomLoader.load_slice(file_path, slice_index)
+        elif file_path.lower().endswith(('.dcm', '.dicom')):
+            return DicomLoader.load_single_slice(file_path, slice_index)
         elif file_path.lower().endswith(('.nii', '.nii.gz')):
             return NiftiLoader.load_slice(file_path, slice_index)
         else:
-            raise ValueError(f"Formato não suportado: {file_path}")
+            raise ValueError(f"Format is not supported: {file_path}")

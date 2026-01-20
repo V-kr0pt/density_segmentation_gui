@@ -493,8 +493,16 @@ def batch_process_step():
     </div>
     """, unsafe_allow_html=True)
 
+    def strip_known_extension(filename):
+        known_exts = ('.nii.gz', '.nii', '.dcm', '.dicom')
+
+        for ext in known_exts:
+            if filename.lower().endswith(ext):
+                return filename[:-len(ext)]
+        return filename
+
     for file in files_to_process:
-        file_name = file.split('.')[0] if file.endswith('.nii') or file.endswith('.nii.gz') else file            
+        file_name = strip_known_extension(file)            
         threshold = final_thresholds[file_name]
         col1, col2 = st.columns([4, 1])
         with col1:
