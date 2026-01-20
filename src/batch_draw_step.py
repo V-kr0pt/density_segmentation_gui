@@ -179,6 +179,37 @@ def batch_draw_step():
 
     # --- Drawing Canvas ---
     st.markdown("### 🖌️ Drawing Canvas")
+    
+    # Drawing instructions (collapsible)
+    with st.expander("Drawing Instructions", expanded=False):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("""
+    <small>
+
+    **Mouse**
+    - Left click: add a point  
+    - Double click: undo last segment  
+    - Right click: close polygon  
+
+    </small>
+    """, unsafe_allow_html=True)
+
+        with col2:
+            st.markdown("""
+    <small>
+
+    **Mac trackpad**
+    - Single tap: add a point  
+    - Double tap: undo last segment  
+    - Two-finger tap: close polygon  
+
+    </small>
+    """, unsafe_allow_html=True)
+
+
+    
     rotated_width, rotated_height = pil_image.size
     canvas_result = st_canvas(
         fill_color="rgba(255, 0, 0, 0.3)",
