@@ -211,6 +211,66 @@ class DicomLoader(BaseImageLoader):
         
         return slice_data, np.eye(4), original_shape, slice_index
 
+    @staticmethod
+    def load_single_file(file_path):
+        """
+        Loads a single DICOM file (either 2D slice or multi-frame volume).
+
+        Args:
+            file_path (str): Path to a DICOM file (.dcm, .dicom)
+
+        Returns:
+            tuple: (volume, affine, original_shape)
+                - volume: np.ndarray (after rearrange_dimensions)
+                - affine: np.ndarray (4x4) - identity for now
+                - original_shape: tuple (before rearrange_dimensions)
+        """
+        if not os.path.isfile(file_path):
+            raise FileNotFoundError(f"DICOM file not found: {file_path}")
+
+        if not file_path.lower().endswith((".dcm", ".dicom")):
+            raise ValueError(f"Not a DICOM file extension: {file_path}")
+
+        ds = pydicom.dcmread(file_path)
+
+        # Some DICOMs can be missing pixel data (e.g., RTSTRUCT, SR, etc.)
+        if "PixelData" not in ds:
+            raise ValueError(f"DICOM has no PixelData (not an image): {file_path}")
+
+        arr = ds.pixel_array  # may be 2D, 3D (multiframe), or sometimes 4D (rare)
+
+        # Normalize to a 3D "volume-like" array: (Z, Y, X)
+        print(f"The DICOM dim: {arr.ndim}")
+        if arr.ndim == 2:
+            volume = arr[np.newaxis, ...]  # (1, H, W)
+        elif arr.ndim == 3:
+            # Typically (n_frames, H, W) for multiframe
+            volume = arr
+        elif arr.ndim == 4:
+            # Some modalities/encodings can yield (n_frames, H, W, channels)
+            # For medical grayscale data, channels is often 1; handle conservatively:
+            if arr.shape[-1] == 1:
+                volume = arr[..., 0]
+            else:
+                raise ValueError(
+                    f"Unsupported 4D DICOM pixel array shape {arr.shape} in {file_path}. "
+                    "If this is RGB, you'll need a policy (e.g., convert to grayscale or keep channels)."
+                )
+        else:
+            raise ValueError(f"Unsupported DICOM pixel array ndim={arr.ndim} for file {file_path}")
+
+        volume = volume.astype(np.float32)
+
+        original_shape = volume.shape  # (Z, Y, X) before rearrange
+        volume, _ = BaseImageLoader.rearrange_dimensions(volume)
+
+        # TODO: If you want a real affine, you can compute it from:
+        # ImagePositionPatient, ImageOrientationPatient, PixelSpacing, SliceThickness/SpacingBetweenSlices
+        affine = np.eye(4, dtype=np.float32)
+
+        return volume, affine, original_shape
+    
+
 class UnifiedImageLoader:
     """Unified Interface for all formats"""
 
@@ -218,10 +278,12 @@ class UnifiedImageLoader:
     def load_image(file_path):
         if os.path.isdir(file_path):
             return DicomLoader.load_series(file_path)
+        elif file_path.lower().endswith(('.dcm', '.dicom')):
+            return DicomLoader.load_single_file(file_path)
         elif file_path.lower().endswith(('.nii', '.nii.gz')):
             return NiftiLoader.load_volume(file_path)
         else:
-            raise ValueError(f"Formato não suportado: {file_path}")
+            raise ValueError(f"Format is not supported: {file_path}")
         
     @staticmethod
     def load_slice(file_path, slice_index=None):
@@ -241,4 +303,4 @@ class UnifiedImageLoader:
         elif file_path.lower().endswith(('.nii', '.nii.gz')):
             return NiftiLoader.load_slice(file_path, slice_index)
         else:
-            raise ValueError(f"Formato não suportado: {file_path}")
+            raise ValueError(f"Format is not supported: {file_path}")
