@@ -220,23 +220,17 @@ def batch_draw_step():
         height=rotated_height,
         width=rotated_width,
         drawing_mode="polygon",
+        display_toolbar=True,
         key=f"canvas_{current_file}"
     )
     st.markdown('</div>', unsafe_allow_html=True)
 
     # --- Canvas Control Buttons ---
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
         if st.button("🎨 Create Mask"):
             st.session_state["create_mask"] = True
     with col2:
-        if st.button("🗑️ Clear Drawing"):
-            keys_to_clear = ["points", "mask", "result", "create_mask"]
-            for key in keys_to_clear:
-                if key in st.session_state:
-                    del st.session_state[key]
-            st.rerun()
-    with col3:
         if st.button("← Back to File Selection"):
             st.session_state["current_step"] = "file_selection"
             st.rerun()
@@ -247,28 +241,38 @@ def batch_draw_step():
     if canvas_result.json_data is not None:
         objects = canvas_result.json_data["objects"]
         polygons = []
-        for obj in objects:
-            if obj["type"] == "path":  # ensure it's a polygon
-                poly = obj["path"]
-                points_rotated = [(int(p[1]), int(p[2])) for p in poly if len(p) == 3]
-                points = []
-                for x, y in points_rotated:
-                    # removing rotation
-                    px, py = rotated_height - y, x
+        
+        # If canvas was cleared (no objects), clear all related state
+        if len(objects) == 0:
+            st.session_state.polygons = []
+            # Clear mask-related state if it exists
+            for key in ["mask", "result", "create_mask"]:
+                if key in st.session_state:
+                    del st.session_state[key]
+        else:
+            # Process polygons from canvas
+            for obj in objects:
+                if obj["type"] == "path":  # ensure it's a polygon
+                    poly = obj["path"]
+                    points_rotated = [(int(p[1]), int(p[2])) for p in poly if len(p) == 3]
+                    points = []
+                    for x, y in points_rotated:
+                        # removing rotation
+                        px, py = rotated_height - y, x
 
-                    # padding removing
-                    px -= int(padding*scale)
-                    py -= int(padding*scale)
+                        # padding removing
+                        px -= int(padding*scale)
+                        py -= int(padding*scale)
 
-                    # scaling back to original image size
-                    px = min(max(px, 0), image.shape[0] - 1)
-                    py = min(max(py, 0), image.shape[1] - 1)
+                        # scaling back to original image size
+                        px = min(max(px, 0), image.shape[0] - 1)
+                        py = min(max(py, 0), image.shape[1] - 1)
 
-                    points.append((px, py))
-                polygons.append(points)
+                        points.append((px, py))
+                    polygons.append(points)
 
-        # Save all polygons to session state
-        st.session_state.polygons = polygons
+            # Save all polygons to session state
+            st.session_state.polygons = polygons
 
     # =========================
     # Mask Creation Logic
