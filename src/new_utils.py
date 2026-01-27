@@ -133,14 +133,19 @@ class MaskManager:
         return np.count_nonzero(mask)
     
     @staticmethod 
-    
     def create_final_mask(folder_path, original_shape, original_affine):
         """
-        Creates a 3D NIfTI mask from PNG images with dimension matching.
+        Creates a 3D NIfTI mask from processed slice arrays.
 
-        Before stacking PNG slices, identifies the slice dimension in the original volume
-        and ensures proper orientation by comparing spatial dimensions.
+        Args:
+            folder_path: directory containing .npy slice files
+            original_shape: 3D shape of original volume
+            original_affine: affine matrix from original volume
+
+        Returns:
+            str: path to saved mask.nii file
         """
+        
         mask_path = os.path.join(folder_path, 'mask.nii')
 
         # Load and sort NPY files
@@ -197,17 +202,17 @@ class MaskManager:
         nib.save(mask_nii, mask_path)        
         print(f"Mask successfully saved to {mask_path}")
 
-        # removing numpy files after mask creation
-        removed_count=0
-        for npy_file in npy_files:
+        # Clean up temporary .npy files
+        print(f"Cleaning up {len(npy_files)} temporary .npy files...")
+        for f in npy_files:
+            npy_path = os.path.join(folder_path, f)
             try:
-                file_path = os.path.join(folder_path, npy_file)
-                os.remove(file_path)
-                removed_count += 1
-                print(f"Removed: {npy_file}")
+                os.remove(npy_path)
             except Exception as e:
-                print(f"Error removing {npy_file}: {e}")
+                print(f"Warning: Could not remove {f}: {e}")
 
+        print(f"Cleanup complete. Temporary files removed.")
+        
         return mask_path
         
 
