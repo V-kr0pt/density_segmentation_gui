@@ -147,6 +147,20 @@ class MaskManager:
         if not npy_files:
             raise FileNotFoundError(f"No NPY files found in {folder_path}")
 
+        # Sort files numerically by slice index to preserve correct order
+        def extract_slice_index(filename):
+            """Extract slice index from filename like 'slice_5_threshold_0.38.npy'"""
+            parts = filename.split('_')
+            for i, part in enumerate(parts):
+                if part == 'slice' and i + 1 < len(parts):
+                    try:
+                        return int(parts[i + 1])
+                    except ValueError:
+                        continue
+            return 0  # fallback
+        
+        npy_files.sort(key=extract_slice_index)
+
         images = []
         for f in npy_files:
             array = np.load(os.path.join(folder_path, f))
