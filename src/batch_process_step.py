@@ -21,16 +21,9 @@ from performance_config import performance_config, get_system_info
 class BatchProcessingManager:
     """
     Manages multi-threaded batch file processing.
-    Implements Python threading best practices for optimized performance.
     """
     
     def __init__(self, max_workers=None):
-        """
-        Initialize the batch processing manager.
-        
-        Args:
-            max_workers (int): Maximum number of threads. If None, uses optimized configuration
-        """
         self.max_workers = max_workers or performance_config.get_optimal_workers()
         self.progress_lock = threading.Lock()
         self.error_lock = threading.Lock()
@@ -42,12 +35,6 @@ class BatchProcessingManager:
     def process_single_file(self, file_info):
         """
         Process a single file in a thread-safe manner.
-        
-        Args:
-            file_info (dict): File information to be processed
-            
-        Returns:
-            dict: Processing result
         """
         try:
             file = file_info['file']
@@ -70,11 +57,21 @@ class BatchProcessingManager:
             if not os.path.exists(mask_path):
                 raise FileNotFoundError(f"Mask not found: {mask_path}")
             
-            # Load data and calculate target area
-            middle_image_slice, original_affine, original_shape, slice_index = UnifiedImageLoader.load_slice(original_image_path)
-            middle_mask_slice, _, _, _ = UnifiedImageLoader.load_slice(mask_path)
-            thresholded_img = ThresholdOperator.threshold_slice(middle_image_slice, middle_mask_slice, T)
+            # Load central slice to calculate target area
+            central_image_slice, original_affine, original_shape, central_slice_idx = \
+                UnifiedImageLoader.load_slice(original_image_path)
+            central_mask_slice, _, _, _ = UnifiedImageLoader.load_slice(mask_path, central_slice_idx)
+            
+            # Calculate target area from central slice
+            thresholded_img = ThresholdOperator.threshold_slice(
+                central_image_slice, central_mask_slice, T
+            )
             target_area = MaskManager.measure_mask_area(thresholded_img)
+            
+            print(f"Processing {file_name}:")
+            print(f"  Original shape: {original_shape}")
+            print(f"  Central slice index: {central_slice_idx}")
+            print(f"  Target area: {target_area} pixels")
             
             # Clean output directory
             if os.path.exists(save_dir):
@@ -82,18 +79,20 @@ class BatchProcessingManager:
                     os.remove(os.path.join(save_dir, f))
             os.makedirs(save_dir, exist_ok=True)
             
-            # Process all slices with optimized chunking
-            num_slices = slice_index*2
-            if not num_slices in original_shape:
-                num_slices+=1
-                assert num_slices in original_shape, f"num_slices {num_slices} not in original_shape {original_shape}"
+            # Determine number of slices
+            slice_dim = np.argmin(original_shape)
+            num_slices = original_shape[slice_dim]
             
+            print(f"  Slice dimension: {slice_dim}")
+            print(f"  Number of slices: {num_slices}")
+            
+            # Process all slices
             slice_results = self._process_slices_optimized(
-                original_image_path, mask_path, save_dir, 
+                original_image_path, mask_path, save_dir,
                 target_area, num_slices
             )
             
-            # Create NIfTI file
+            # Create final NIfTI file from processed slices
             nifti_path = MaskManager.create_final_mask(save_dir, original_shape, original_affine)
             
             return {
@@ -107,7 +106,7 @@ class BatchProcessingManager:
         except Exception as e:
             error_msg = f"Error processing {file}: {str(e)}\n{traceback.format_exc()}"
             with self.error_lock:
-                pass  # Could log errors here if needed
+                print(error_msg)
             return {
                 'success': False,
                 'file_name': file_name,
@@ -115,86 +114,79 @@ class BatchProcessingManager:
                 'error': error_msg
             }
     
-    def _process_slices_optimized(self, original_image_path, mask_path, save_dir, 
+    def _process_slices_optimized(self, original_image_path, mask_path, save_dir,
                                  target_area, num_slices):
         """
-        Process slices with optimized chunking and memory management.
+        Process all slices with optimized chunking and memory management.
+        Slices are processed in NATIVE orientation and saved as-is.
         """
-        # Chunk size based on number of slices
         chunk_size = performance_config.get_chunk_size(num_slices)
         total_processed = 0
         
-        # Optimized I/O settings
         compression_level = self.io_settings['compression_level']
         gc_frequency = self.performance_settings['gc_frequency']
         
         for start_idx in range(0, num_slices, chunk_size):
             end_idx = min(start_idx + chunk_size, num_slices)
             
-            # Process current chunk
             for slice_index in range(start_idx, end_idx):
-                
-                # Load slice data with lazy loading
-                image_slice, _, _, _ = UnifiedImageLoader.load_slice(original_image_path, slice_index)
-                mask_slice, _, _, _ = UnifiedImageLoader.load_slice(mask_path, slice_index)
-
-                # Apply dynamic threshold adjustment
-                adjusted_threshold, thresholded_image =\
-                        ThresholdOperator.adjust_slice_threshold(image_slice,
-                                                                mask_slice,
-                                                                    target_area)
-
-                # Create image (transform 1 in 255) and save
-                binary_image = np.where(thresholded_image > 0, 255, 0).astype(np.uint8)
-                filename = f'slice_{slice_index}_threshold_{adjusted_threshold:.2f}.png'
-                filepath = os.path.join(save_dir, filename)
-
-                # Saving unmodified numpy file
-                npy_filename = f'slice_{slice_index}_threshold_{adjusted_threshold:.2f}.npy'
-                npy_filepath = os.path.join(save_dir, npy_filename)
-                np.save(npy_filepath, binary_image)
-                
-                # Optimized saving with compression
-                # Saving .png image with corrections
-                binary_img_pil = np.flip(np.rot90(binary_image, k=1), axis=1)
-                img_pil = Image.fromarray(binary_img_pil, mode='L')
-                img_pil.save(filepath, optimize=True, compress_level=compression_level)
-
-                total_processed += 1
-
-                # Memory management
-                with self.memory_lock:
-                    self.operations_count += 1
-                    if self.operations_count % gc_frequency == 0:
-                        gc.collect()
-
-                # Clean up large variables
-                del image_slice, mask_slice, thresholded_image, binary_image
+                try:
+                    # Load slice in NATIVE orientation
+                    image_slice, _, _, _ = UnifiedImageLoader.load_slice(
+                        original_image_path, slice_index
+                    )
+                    mask_slice, _, _, _ = UnifiedImageLoader.load_slice(
+                        mask_path, slice_index
+                    )
                     
-                #except Exception as e:
-                #    # Log slice-specific error
-                #    continue
+                    # Apply dynamic threshold adjustment
+                    adjusted_threshold, thresholded_image = \
+                        ThresholdOperator.adjust_slice_threshold(
+                            image_slice, mask_slice, target_area
+                        )
+                    
+                    # Convert to binary (0 or 255 for visualization)
+                    binary_image = np.where(thresholded_image > 0, 255, 0).astype(np.uint8)
+                    
+                    # Save as numpy array (in NATIVE orientation)
+                    npy_filename = f'slice_{slice_index:04d}_threshold_{adjusted_threshold:.2f}.npy'
+                    npy_filepath = os.path.join(save_dir, npy_filename)
+                    np.save(npy_filepath, binary_image)
+                    
+                    # Also save PNG for visualization (rotated for display)
+                    png_filename = f'slice_{slice_index:04d}_threshold_{adjusted_threshold:.2f}.png'
+                    png_filepath = os.path.join(save_dir, png_filename)
+                    
+                    # Apply rotation for PNG visualization (same as GUI display)
+                    binary_img_display = np.rot90(binary_image)
+                    img_pil = Image.fromarray(binary_img_display, mode='L')
+                    img_pil.save(png_filepath, optimize=True, compress_level=compression_level)
+                    
+                    total_processed += 1
+                    
+                    # Memory management
+                    with self.memory_lock:
+                        self.operations_count += 1
+                        if self.operations_count % gc_frequency == 0:
+                            gc.collect()
+                    
+                    # Clean up large variables
+                    del image_slice, mask_slice, thresholded_image, binary_image
+                    
+                except Exception as e:
+                    print(f"Error processing slice {slice_index}: {str(e)}")
+                    continue
         
         return total_processed
     
-    def process_files_batch(self, files_to_process, input_folder, final_thresholds, 
+    def process_files_batch(self, files_to_process, input_folder, final_thresholds,
                            progress_callback=None):
         """
         Process multiple files using ThreadPoolExecutor.
-        
-        Args:
-            files_to_process (list): List of files to process
-            input_folder (str): Input folder path
-            final_thresholds (dict): Dictionary with final thresholds
-            progress_callback (callable): Callback for progress updates
-            
-        Returns:
-            dict: Processing results
         """
         results = {
             'completed': [],
             'errors': [],
-            'total_files': len(files_to_process),
             'total_time': 0
         }
         
@@ -203,7 +195,7 @@ class BatchProcessingManager:
         # Prepare file information
         file_infos = []
         for file in files_to_process:
-            file_name = file.split('.')[0] if file.endswith('.nii') or file.endswith('.nii.gz') else file
+            file_name = file.split('.')[0]  # Remove extension
             file_infos.append({
                 'file': file,
                 'file_name': file_name,
@@ -211,67 +203,62 @@ class BatchProcessingManager:
                 'final_thresholds': final_thresholds
             })
         
-        # Execute parallel processing
+        # Process files in parallel
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # Submit all tasks
             future_to_file = {
-                executor.submit(self.process_single_file, file_info): file_info['file']
-                for file_info in file_infos
+                executor.submit(self.process_single_file, info): info
+                for info in file_infos
             }
             
-            # Collect results as they complete
+            completed_count = 0
             for future in as_completed(future_to_file):
-                file = future_to_file[future]
+                file_info = future_to_file[future]
                 try:
                     result = future.result()
+                    
                     if result['success']:
                         results['completed'].append(result)
-                        if progress_callback:
-                            progress_callback(len(results['completed']), len(files_to_process), file)
                     else:
                         results['errors'].append(result)
+                    
+                    completed_count += 1
+                    
+                    # Progress callback
+                    if progress_callback:
+                        progress_callback(
+                            completed_count,
+                            len(files_to_process),
+                            file_info['file']
+                        )
+                        
                 except Exception as e:
-                    error_msg = f"Unexpected error processing {file}: {str(e)}"
                     results['errors'].append({
-                        'file': file,
-                        'error': error_msg,
-                        'success': False
+                        'file': file_info['file'],
+                        'file_name': file_info['file_name'],
+                        'error': str(e)
                     })
         
         results['total_time'] = time.time() - start_time
         return results
 
 
-
+# =========================
+# Main Batch Process Step Function
+# =========================
 def batch_process_step():
     """
-    Main function for Step 4: Process Files in batch mode.
-    Handles batch and individual file processing, progress, and navigation.
+    Step 4: Batch processing with multi-threading support.
     """
-
+    
     # =========================
     # UI Header & Styling
     # =========================
-    st.header("Step 4: Process Files")
+    st.header("⚙️ Step 4: Process Files")
     with open("static/batch_process_step.css") as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-
+    
     # =========================
-    # Input Folder Setup
-    # =========================
-    # Use the main input folder selected in Step 1
-    input_folder = st.session_state.get("main_input_folder", os.path.join(os.getcwd(), "media"))
-
-    if not os.path.exists(input_folder):
-        st.error(f"The selected main input folder does not exist: {input_folder}")
-        if st.button("← Back to File Selection"):
-            st.session_state["current_step"] = "file_selection"
-            st.rerun()
-        return
-
-
-    # =========================
-    # Batch Data Validation
+    # Session State Validation
     # =========================
     if "batch_files" not in st.session_state:
         st.error("No batch files selected. Please go back to file selection.")
@@ -279,80 +266,39 @@ def batch_process_step():
             st.session_state["current_step"] = "file_selection"
             st.rerun()
         return
-
+    
+    if "batch_final_thresholds" not in st.session_state:
+        st.error("No thresholds set. Please complete the threshold step first.")
+        if st.button("← Back to Threshold Step"):
+            st.session_state["current_step"] = "batch_threshold"
+            st.rerun()
+        return
+    
     # =========================
-    # Batch State Setup
+    # Prepare Data
     # =========================
     batch_files = st.session_state["batch_files"]
-    completed_draw = st.session_state["batch_completed_files"]["draw"]
-    completed_threshold = st.session_state["batch_completed_files"]["threshold"]
-    all_completed_completed_process = st.session_state["batch_completed_files"]["process"]
-    completed_process = [f for f in all_completed_completed_process if f in st.session_state["batch_files_without_extension"]]
-
-    # =========================
-    # Prerequisite Checks
-    # =========================
-    if len(completed_draw) < len(batch_files):
-        st.warning(f"Please complete all drawing steps first. {len(completed_draw)}/{len(batch_files)} completed.")
-        if st.button("← Back to Draw Step"):
-            st.session_state["current_step"] = "batch_draw"
-            st.rerun()
-        return
-
-    if len(completed_threshold) < len(batch_files):
-        st.warning(f"Please complete all threshold steps first. {len(completed_threshold)}/{len(batch_files)} completed.")
-        if st.button("← Back to Threshold Step"):
-            st.session_state["current_step"] = "batch_threshold"
-            st.rerun()
-        return
-
-    if "batch_final_thresholds" not in st.session_state:
-        st.error("No thresholds found. Please complete the threshold step first.")
-        if st.button("← Back to Threshold Step"):
-            st.session_state["current_step"] = "batch_threshold"
-            st.rerun()
-        return
-
-    total_files = len(batch_files)
-
-    # =========================
-    # Progress Overview
-    # =========================
-    st.write(f"### Progress: {len(completed_process)}/{total_files} files completed")
-    st.progress(len(completed_process) / total_files)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # =========================
-    # Files Status Display
-    # =========================
-    st.write("### Files Status")
     final_thresholds = st.session_state["batch_final_thresholds"]
+    input_folder = st.session_state.get("main_input_folder", os.path.join(os.getcwd(), "media"))
+    
+    completed_threshold = st.session_state["batch_completed_files"]["threshold"]
+    completed_process = st.session_state["batch_completed_files"]["process"]
+    
+    # Filter files that have thresholds but not yet processed
     files_to_process = []
     for file in batch_files:
         file_name = file.split('.')[0]
-        if file_name in completed_draw and file_name in completed_threshold:
-            threshold = final_thresholds.get(file_name, "Not set")
-            if file_name in completed_process:
-                status = "✅ Completed"
-                color = "#28a745"
-            else:
-                status = "⏳ Ready"
-                color = "#ffc107"
-                files_to_process.append(file)
-            st.markdown(f"""
-            <div style="background: #f8f9fa; padding: 0.75rem; border-radius: 5px; margin: 0.25rem 0; border-left: 3px solid {color};">
-                <strong>{file}</strong><br>
-                Threshold: <code>{threshold:.3f}</code> | Status: <span style="color: {color};">{status}</span>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.markdown(f"""
-            <div style="background: #f8f9fa; padding: 0.75rem; border-radius: 5px; margin: 0.25rem 0; border-left: 3px solid #dc3545;">
-                <strong>{file}</strong><br>
-                <span style="color: #dc3545;">❌ Missing prerequisites</span>
-            </div>
-            """, unsafe_allow_html=True)
-
+        if file_name in completed_threshold and file_name not in completed_process:
+            files_to_process.append(file)
+    
+    # =========================
+    # Progress Display
+    # =========================
+    total_files = len(batch_files)
+    st.write(f"### Progress: {len(completed_process)}/{total_files} files processed")
+    st.progress(len(completed_process) / total_files)
+    st.markdown('</div>', unsafe_allow_html=True)
+    
     # =========================
     # All Files Processed Message
     # =========================
@@ -364,14 +310,13 @@ def batch_process_step():
         </div>
         """, unsafe_allow_html=True)
         if st.button("🔄 Start New Batch"):
-            # Clear all batch-related session state
             keys_to_remove = [key for key in st.session_state.keys() if key.startswith("batch_")]
             for key in keys_to_remove:
                 del st.session_state[key]
             st.session_state["current_step"] = "file_selection"
             st.rerun()
         return
-
+    
     # =========================
     # No Files Pending Message
     # =========================
@@ -381,13 +326,13 @@ def batch_process_step():
             st.session_state["current_step"] = "batch_threshold"
             st.rerun()
         return
-
+    
     # =========================
     # Batch Processing Section
     # =========================
     st.write(f"### Ready to process {len(files_to_process)} files")
     
-    # System information and settings
+    # System information
     with st.expander("📊 System Information & Performance Settings"):
         system_info = get_system_info()
         
@@ -400,43 +345,28 @@ def batch_process_step():
             if 'cpu_percent' in system_info:
                 st.metric("Current CPU Usage", f"{system_info['cpu_percent']:.1f}%")
     
-    # Processing configuration
+    # Thread configuration
     default_workers = performance_config.get_optimal_workers(len(files_to_process))
     
-    # Calculate explanation for tooltip
-    cpu_factor = f"CPU cores ({system_info['cpu_count']}) × 2"
-    memory_factor = f"Memory ({system_info['memory_available_mb']}MB ÷ 500MB per thread)"
-    workload_factor = f"Workload (min of {len(files_to_process)} files, max 6)"
-    
-    # Manual thread selection
     max_workers = st.number_input(
         "Number of parallel threads:",
         min_value=1,
         max_value=128,
         value=default_workers,
         step=1,
-        help=f"Recommended: {default_workers} threads\n\n"
-             f"Calculation based on:\n"
-             f"• {cpu_factor}\n"
-             f"• {memory_factor}\n" 
-             f"• {workload_factor}\n\n"
-             f"The system automatically chooses the smallest value to prevent resource exhaustion."
+        help=f"Recommended: {default_workers} threads based on system resources"
     )
     
     if st.button("🚀 Process All Files (Multi-threaded)", type="primary"):
-        # Initialize progress tracking
         progress_placeholder = st.empty()
         status_placeholder = st.empty()
         
-        # Update the existing progress section
         def update_progress(completed, total, current_file):
-            # Update the main progress bar that already exists
             progress_placeholder.progress(
-                completed / total, 
+                completed / total,
                 text=f"Processing: {completed}/{total} files completed"
             )
             
-            # Show current file status
             elapsed_time = time.time() - start_time
             if completed > 0:
                 avg_time = elapsed_time / completed
@@ -458,7 +388,7 @@ def batch_process_step():
                 update_progress
             )
             
-            # Update session state with completed files
+            # Update session state
             for result in results['completed']:
                 if result['file_name'] not in st.session_state["batch_completed_files"]["process"]:
                     st.session_state["batch_completed_files"]["process"].append(result['file_name'])
@@ -481,28 +411,27 @@ def batch_process_step():
         except Exception as e:
             st.error(f"Error during parallel processing: {str(e)}")
             st.exception(e)
-
+    
     # =========================
-    # Individual File Processing Section
+    # Individual File Processing
     # =========================
     st.divider()
     st.markdown("""
     <div class="step-container">
         <h4>🔧 Individual Processing</h4>
-        <p>Process files one by one if you prefer more control over each file.</p>
+        <p>Process files one by one if you prefer more control.</p>
     </div>
     """, unsafe_allow_html=True)
-
+    
     def strip_known_extension(filename):
         known_exts = ('.nii.gz', '.nii', '.dcm', '.dicom')
-
         for ext in known_exts:
             if filename.lower().endswith(ext):
                 return filename[:-len(ext)]
         return filename
-
+    
     for file in files_to_process:
-        file_name = strip_known_extension(file)            
+        file_name = strip_known_extension(file)
         threshold = final_thresholds[file_name]
         col1, col2 = st.columns([4, 1])
         with col1:
@@ -514,8 +443,7 @@ def batch_process_step():
             """, unsafe_allow_html=True)
         with col2:
             if st.button("Process", key=f"process_{file_name}"):
-                # Use optimized manager for individual processing
-                batch_manager = BatchProcessingManager(max_workers=1)  # Single thread for individual
+                batch_manager = BatchProcessingManager(max_workers=1)
                 
                 file_info = {
                     'file': file,
@@ -539,9 +467,9 @@ def batch_process_step():
                             st.error(f"❌ Error: {result['error']}")
                             
                 except Exception as e:
-                    st.error(f"❌ Unexpected error processing {file}: {str(e)}")
+                    st.error(f"❌ Unexpected error: {str(e)}")
                     st.exception(e)
-
+    
     # =========================
     # Back Button
     # =========================
