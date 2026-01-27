@@ -1,5 +1,6 @@
 import numpy as np
 import nibabel as nib
+import re
 import os
 import cv2
 import matplotlib.pyplot as plt
@@ -149,16 +150,10 @@ class MaskManager:
 
         # Sort files numerically by slice index to preserve correct order
         def extract_slice_index(filename):
-            """Extract slice index from filename like 'slice_5_threshold_0.38.npy'"""
-            parts = filename.split('_')
-            for i, part in enumerate(parts):
-                if part == 'slice' and i + 1 < len(parts):
-                    try:
-                        return int(parts[i + 1])
-                    except ValueError:
-                        continue
-            return 0  # fallback
-        
+            """Extract slice index from filename like 'slice_0005_threshold_0.38.npy'"""
+            match = re.search(r'slice_(\d+)', filename)
+            return int(match.group(1)) if match else 0
+
         npy_files.sort(key=extract_slice_index)
 
         images = []
