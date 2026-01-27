@@ -157,8 +157,15 @@ def batch_threshold_step():
 
     try:
         img, _, _, _ = UnifiedImageLoader.load_slice(original_image_path)
-        img_show = np.rot90(ImageProcessor.normalize_image(img)) # to show on GUI
         msk, _, _, _ = UnifiedImageLoader.load_slice(mask_path)
+        
+        # Apply flips for DICOM visualization only
+        is_dicom = os.path.isdir(original_image_path) or original_image_path.lower().endswith(('.dcm', '.dicom'))
+        if is_dicom:
+            img = np.flip(img, axis=(0, 1))
+            msk = np.flip(msk, axis=(0, 1))
+        
+        img_show = np.rot90(ImageProcessor.normalize_image(img)) # to show on GUI
         msk_show = np.rot90(msk)
     except Exception as e:
         st.error(f"Error loading images: {str(e)}")

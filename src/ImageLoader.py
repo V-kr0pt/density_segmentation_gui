@@ -152,7 +152,7 @@ class DicomLoader(BaseImageLoader):
         dicoms = [pydicom.dcmread(f) for f in dicom_files]
         dicoms.sort(key=lambda d: int(getattr(d, "InstanceNumber", 0)))
         
-        # Create 3D volume from slices
+        # Create 3D volume from slices (NO FLIPS - data stays pure)
         volume = np.stack([d.pixel_array for d in dicoms], axis=0)
         
         # Apply dimension rearrangement
@@ -163,45 +163,39 @@ class DicomLoader(BaseImageLoader):
     def load_slice(folder_path, slice_index=None):
         """
         Optimized method to load only a specific slice from DICOM series.
+        Returns pure data without flips.
         
         Args:
             folder_path (str): Path to DICOM directory
             slice_index (int, optional): Specific slice index. If None, loads central slice.
-            orientation_rules (dict, optional): Rules for image orientation
             
         Returns:
             tuple: (slice_data, affine, original_shape, slice_index_used)
         """
-        # Load DICOM files metadata first (fast)
-        dicom_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path)
-                      if f.lower().endswith(('.dcm', '.dicom'))]
+        # Get sorted list of DICOM files (fast - only filenames)
+        dicom_files = sorted([
+            os.path.join(folder_path, f) for f in os.listdir(folder_path)
+            if f.lower().endswith(('.dcm', '.dicom'))
+        ])
         
         if not dicom_files:
             raise FileNotFoundError(f"No DICOM files found in {folder_path}")
         
-        # Sort by InstanceNumber without loading pixel data
-        dicoms = []
-        for file_path in dicom_files:
-            ds = pydicom.dcmread(file_path, stop_before_pixels=True)  # Fast metadata only
-            dicoms.append((file_path, ds))
-        
-        dicoms.sort(key=lambda x: int(getattr(x[1], "InstanceNumber", 0)))
+        num_slices = len(dicom_files)
         
         # Calculate central slice if not specified
         if slice_index is None:
-            slice_index = len(dicoms) // 2
-        elif slice_index >= len(dicoms):
-            raise ValueError(f"Slice index {slice_index} out of range. Series has {len(dicoms)} slices.")
+            slice_index = num_slices // 2
+        elif slice_index >= num_slices:
+            raise ValueError(f"Slice index {slice_index} out of range. Series has {num_slices} slices.")
         
-        # Load only the required slice's pixel data
-        file_path, ds_meta = dicoms[slice_index]
-        ds_full = pydicom.dcmread(file_path)  # Now load with pixel data
-        slice_data = ds_full.pixel_array.astype(np.float32)
+        # Load only the required slice's pixel data (NO FLIPS - data stays pure)
+        file_path = dicom_files[slice_index]
+        ds = pydicom.dcmread(file_path)
+        slice_data = ds.pixel_array.astype(np.float32)
         
-        # Get original volume shape from metadata
-        num_slices = len(dicoms)
-        rows = ds_full.Rows
-        cols = ds_full.Columns
+        # Get shape from the loaded slice
+        rows, cols = slice_data.shape
         original_shape = (num_slices, rows, cols)
         
         # Create 3D-like array for dimension rearrangement
@@ -307,6 +301,7 @@ class DicomLoader(BaseImageLoader):
                 slice_index_used = slice_index
 
             slice_data = arr.astype(np.float32)
+            
             original_shape = (1, slice_data.shape[0], slice_data.shape[1])  # (Z=1, H, W)
 
             # Use your rearrange pipeline (expects 3D)
@@ -330,6 +325,7 @@ class DicomLoader(BaseImageLoader):
                 slice_index_used = slice_index
 
             frame = arr[slice_index_used].astype(np.float32)  # (H, W)
+            
             original_shape = (n_frames, frame.shape[0], frame.shape[1])
 
             volume_like = frame[np.newaxis, ...]  # (1, H, W)
@@ -347,6 +343,7 @@ class DicomLoader(BaseImageLoader):
             if slice_index_used < 0 or slice_index_used >= n_frames:
                 raise ValueError(f"Slice index {slice_index_used} out of range. File has {n_frames} frames.")
             frame = arr[slice_index_used].astype(np.float32)
+            
             original_shape = (n_frames, frame.shape[0], frame.shape[1])
 
             volume_like = frame[np.newaxis, ...]

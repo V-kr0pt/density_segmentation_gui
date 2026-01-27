@@ -133,12 +133,15 @@ class MaskManager:
     
     @staticmethod 
     
-    def create_final_mask(folder_path, original_shape, original_affine):
+    def create_final_mask(folder_path, original_shape, original_affine, original_file_path=None):
         """
-        Creates a 3D NIfTI mask from PNG images with dimension matching.
+        Creates a 3D NIfTI mask from NPY images with dimension matching.
 
-        Before stacking PNG slices, identifies the slice dimension in the original volume
-        and ensures proper orientation by comparing spatial dimensions.
+        Args:
+            folder_path: Directory containing NPY files
+            original_shape: Original volume shape
+            original_affine: Original affine matrix
+            original_file_path: Path to original image file (unused, kept for compatibility)
         """
         mask_path = os.path.join(folder_path, 'mask.nii')
 
@@ -179,9 +182,6 @@ class MaskManager:
         
         # Convert to binary (0 and 1)
         volume_binary = (volume > 0).astype(np.uint8)
-
-        # --- FIX: correct flipped orientation (Z-axis flip) ---
-        volume_binary = np.flip(volume_binary, axis=2)
         
         # Save NIfTI
         mask_nii = nib.Nifti1Image(volume_binary, original_affine)

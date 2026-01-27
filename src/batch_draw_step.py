@@ -130,16 +130,20 @@ def batch_draw_step():
         st.error(f"File not found: {file_path}")
         return
 
-    # Load image and metadata
-    #image, affine, nb_of_slices = ImageOperations.load_image(file_path)
-    volume, affine, original_shape = UnifiedImageLoader.load_image(file_path)
-    internal_volume_shape = volume.shape 
-    nb_of_slices= internal_volume_shape[0]
-    image = volume[internal_volume_shape[0]//2, :, :] # loading the central slice as image
+    # Load only the central slice (much faster, especially for DICOM)
+    image, affine, original_shape, slice_index = UnifiedImageLoader.load_slice(file_path)
+    nb_of_slices = original_shape[0]
     print(f"original shape:{original_shape}")
-    print(f"internal_volume_shape:{internal_volume_shape}")
+    print(f"loaded slice index: {slice_index}")
     print(f"image shape: {image.shape}")
-    del volume # removing volume to not consume RAM
+    
+    # Apply flips for DICOM visualization only (not to data)
+    is_dicom = os.path.isdir(file_path) or file_path.lower().endswith(('.dcm', '.dicom'))
+    if is_dicom:
+        # Flip for display only
+        image_display = np.flip(image, axis=(0, 1))
+    else:
+        image_display = image
 
     # Initialize session state for new file
     if "affine" not in st.session_state or st.session_state.get("current_batch_file") != current_file:
@@ -158,14 +162,14 @@ def batch_draw_step():
     # Image Scaling & Canvas Setup
     # =========================
     max_width, max_height = 1200, 800
-    orig_height, orig_width = image.shape[0], image.shape[1]
+    orig_height, orig_width = image_display.shape[0], image_display.shape[1]
     scale = min(max_width / orig_width, max_height / orig_height, 1)
     if "scale" not in st.session_state:
         st.session_state["scale"] = scale
 
     # Pad image to avoid edge issues 
     padding = 50
-    padded_image = np.pad(image,
+    padded_image = np.pad(image_display,
                            pad_width=((padding, padding), (padding, padding)),
                             mode="constant", constant_values=0)
     padded_image = ImageProcessor.normalize_image(padded_image) 
@@ -265,8 +269,14 @@ def batch_draw_step():
                         py -= int(padding*scale)
 
                         # scaling back to original image size
-                        px = min(max(px, 0), image.shape[0] - 1)
-                        py = min(max(py, 0), image.shape[1] - 1)
+                        px = min(max(px, 0), image_display.shape[0] - 1)
+                        py = min(max(py, 0), image_display.shape[1] - 1)
+                        
+                        # Reverse display flips for DICOM to get original coordinates
+                        if is_dicom:
+                            # Reverse flip(axis=(0,1))
+                            px = image_display.shape[0] - 1 - px
+                            py = image_display.shape[1] - 1 - py
 
                         points.append((px, py))
                     polygons.append(points)
@@ -296,7 +306,7 @@ def batch_draw_step():
         st.markdown("### 👁️ Mask Preview")
         col1, col2 = st.columns(2)
 
-        present_img = ImageProcessor.normalize_image(np.rot90(image))
+        present_img = ImageProcessor.normalize_image(np.rot90(image_display))
         present_result = ImageProcessor.normalize_image(np.rot90(st.session_state["result"]))
 
         with col1:
@@ -313,7 +323,7 @@ def batch_draw_step():
                         original_shape=original_shape,
                         nb_of_slices=st.session_state["nb_of_slices"],
                         affine=st.session_state["affine"],
-                        file_path=st.session_state["output_path"],
+                        file_path=st.session_state["output_path"]
                         #points=st.session_state["points"], in old version we save a .json file with the points and scale info
                         #scale=st.session_state["scale"]
                     )

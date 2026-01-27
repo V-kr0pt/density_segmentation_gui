@@ -61,6 +61,9 @@ class BatchProcessingManager:
             mask_path = os.path.join(output_path, 'dense.nii')
             save_dir = os.path.join(output_path, 'dense_mask')
             
+            # Detect if DICOM for PNG visualization flips
+            is_dicom = os.path.isdir(original_image_path) or original_image_path.lower().endswith(('.dcm', '.dicom'))
+            
             # Get threshold value
             T = final_thresholds[file_name]
             
@@ -90,11 +93,11 @@ class BatchProcessingManager:
             
             slice_results = self._process_slices_optimized(
                 original_image_path, mask_path, save_dir, 
-                target_area, num_slices
+                target_area, num_slices, is_dicom
             )
             
             # Create NIfTI file
-            nifti_path = MaskManager.create_final_mask(save_dir, original_shape, original_affine)
+            nifti_path = MaskManager.create_final_mask(save_dir, original_shape, original_affine, original_image_path)
             
             return {
                 'success': True,
@@ -116,9 +119,10 @@ class BatchProcessingManager:
             }
     
     def _process_slices_optimized(self, original_image_path, mask_path, save_dir, 
-                                 target_area, num_slices):
+                                 target_area, num_slices, is_dicom=False):
         """
         Process slices with optimized chunking and memory management.
+        Applies flips to PNGs only for DICOM visualization.
         """
         # Chunk size based on number of slices
         chunk_size = performance_config.get_chunk_size(num_slices)
@@ -149,14 +153,18 @@ class BatchProcessingManager:
                 filename = f'slice_{slice_index}_threshold_{adjusted_threshold:.2f}.png'
                 filepath = os.path.join(save_dir, filename)
 
-                # Saving unmodified numpy file
+                # Saving unmodified numpy file (pure data, no flips)
                 npy_filename = f'slice_{slice_index}_threshold_{adjusted_threshold:.2f}.npy'
                 npy_filepath = os.path.join(save_dir, npy_filename)
                 np.save(npy_filepath, binary_image)
                 
+                # Apply flips for DICOM PNG visualization only
+                if is_dicom:
+                    binary_img_pil = np.flip(np.rot90(binary_image, k=1), axis=1)
+                else:
+                    binary_img_pil = np.rot90(binary_image, k=1)
+                
                 # Optimized saving with compression
-                # Saving .png image with corrections
-                binary_img_pil = np.flip(np.rot90(binary_image, k=1), axis=1)
                 img_pil = Image.fromarray(binary_img_pil, mode='L')
                 img_pil.save(filepath, optimize=True, compress_level=compression_level)
 
