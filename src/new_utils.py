@@ -1,5 +1,6 @@
 import numpy as np
 import nibabel as nib
+import re
 import os
 import cv2
 import matplotlib.pyplot as plt
@@ -191,6 +192,90 @@ class MaskManager:
         """Return number of non-zero pixels in mask."""
         return np.count_nonzero(mask)
     
+    @staticmethod 
+    def create_final_mask(folder_path, original_shape, original_affine):
+        """
+        Creates a 3D NIfTI mask from processed slice arrays.
+
+        Args:
+            folder_path: directory containing .npy slice files
+            original_shape: 3D shape of original volume
+            original_affine: affine matrix from original volume
+
+        Returns:
+            str: path to saved mask.nii file
+        """
+        
+        mask_path = os.path.join(folder_path, 'mask.nii')
+
+        # Load and sort NPY files
+        npy_files = [f for f in os.listdir(folder_path) if f.endswith('.npy')]
+        if not npy_files:
+            raise FileNotFoundError(f"No NPY files found in {folder_path}")
+
+        # Sort files numerically by slice index to preserve correct order
+        def extract_slice_index(filename):
+            """Extract slice index from filename like 'slice_0005_threshold_0.38.npy'"""
+            match = re.search(r'slice_(\d+)', filename)
+            return int(match.group(1)) if match else 0
+
+        npy_files.sort(key=extract_slice_index)
+
+        images = []
+        for f in npy_files:
+            array = np.load(os.path.join(folder_path, f))
+            images.append(array)
+
+        print(f"Loaded {len(images)} PNG slices")
+        print(f"Original shape: {original_shape}")
+        print(f"PNG image shape: {images[0].shape}")
+
+        # Identify slice dimension in original volume (smallest dimension)
+        slice_dim = np.argmin(original_shape)
+        num_slices_original = original_shape[slice_dim]
+        num_slices_png = len(images)
+
+        assert num_slices_png == num_slices_original, "Something wrong happened: The number of .png files is diferent from the number of slices in original volume image."
+
+
+        # Get spatial dimensions from original volume (the two non-slice dimensions)
+        spatial_dims = [i for i in range(3) if i != slice_dim]
+        original_spatial_shape = (original_shape[spatial_dims[0]], original_shape[spatial_dims[1]])
+
+        print(f"Original spatial dimensions: {original_spatial_shape}")
+        print(f"Numpy spatial dimensions: {images[0].shape}")
+
+        # Stack with proper orientation
+        volume = MaskManager._stack_arrays_preserving_orientation(images, original_shape)
+
+        print(f"Final volume shape: {volume.shape}")
+        print(f"Target shape: {original_shape}")
+        
+        # Convert to binary (0 and 1)
+        volume_binary = (volume > 0).astype(np.uint8)
+
+        # --- FIX: correct flipped orientation (Z-axis flip) ---
+        volume_binary = np.flip(volume_binary, axis=2)
+        
+        # Save NIfTI
+        mask_nii = nib.Nifti1Image(volume_binary, original_affine)
+        nib.save(mask_nii, mask_path)        
+        print(f"Mask successfully saved to {mask_path}")
+
+        # Clean up temporary .npy files
+        print(f"Cleaning up {len(npy_files)} temporary .npy files...")
+        for f in npy_files:
+            npy_path = os.path.join(folder_path, f)
+            try:
+                os.remove(npy_path)
+            except Exception as e:
+                print(f"Warning: Could not remove {f}: {e}")
+
+        print(f"Cleanup complete. Temporary files removed.")
+        
+        return mask_path
+        
+
     @staticmethod
     def save_mask(mask_2d, original_shape, affine, file_path, file_name="dense.nii"):
         """
@@ -258,7 +343,7 @@ class MaskManager:
         
         return full_path
     
-    @staticmethod
+    @staticmethod 
     def create_final_mask(folder_path, original_shape, original_affine):
         """
         Creates a 3D NIfTI mask from processed slice arrays.
@@ -271,12 +356,22 @@ class MaskManager:
         Returns:
             str: path to saved mask.nii file
         """
+        import re
+        
         mask_path = os.path.join(folder_path, 'mask.nii')
         
         # Load all .npy files
-        npy_files = sorted([f for f in os.listdir(folder_path) if f.endswith('.npy')])
+        npy_files = [f for f in os.listdir(folder_path) if f.endswith('.npy')]
         if not npy_files:
             raise FileNotFoundError(f"No NPY files found in {folder_path}")
+        
+        # Sort files numerically by slice index to preserve correct order
+        def extract_slice_index(filename):
+            """Extract slice index from filename like 'slice_0005_threshold_0.38.npy'"""
+            match = re.search(r'slice_(\d+)', filename)
+            return int(match.group(1)) if match else 0
+        
+        npy_files.sort(key=extract_slice_index)
         
         print(f"Loading {len(npy_files)} slice arrays...")
         slices = []
@@ -285,6 +380,9 @@ class MaskManager:
             # Convert to binary (0 or 1)
             binary_slice = (array > 0).astype(np.uint8)
             slices.append(binary_slice)
+        
+        print(f"Original shape: {original_shape}")
+        print(f"Slice shape: {slices[0].shape}")
         
         # Identify slice dimension
         slice_dim = np.argmin(original_shape)
@@ -301,7 +399,6 @@ class MaskManager:
         expected_slice_shape = (original_shape[other_dims[0]], original_shape[other_dims[1]])
         
         print(f"Expected slice shape: {expected_slice_shape}")
-        print(f"Actual slice shape: {slices[0].shape}")
         
         # Verify and potentially transpose slices
         for i in range(len(slices)):
@@ -334,6 +431,18 @@ class MaskManager:
         nib.save(mask_nii, mask_path)
         
         print(f"Final mask saved to {mask_path}")
+        
+        # Clean up temporary .npy files
+        print(f"Cleaning up {len(npy_files)} temporary .npy files...")
+        for f in npy_files:
+            npy_path = os.path.join(folder_path, f)
+            try:
+                os.remove(npy_path)
+            except Exception as e:
+                print(f"Warning: Could not remove {f}: {e}")
+        
+        print(f"Cleanup complete. Temporary files removed.")
+        
         return mask_path
 
 
