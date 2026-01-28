@@ -258,11 +258,10 @@ class DicomToNiftiConverter:
         
         # Check cache
         if not force_reconvert and os.path.exists(nifti_path) and os.path.exists(metadata_path):
-            print(f"✓ Using cached NIfTI: {os.path.basename(nifti_path)}")
+            # Silent cache hit
             return nifti_path
         
-        # Convert DICOM
-        print(f"Converting DICOM to NIfTI: {os.path.basename(dicom_path)}")
+        # Convert DICOM (silent)
         
         if os.path.isdir(dicom_path):
             volume, affine, metadata = self._convert_dicom_series(dicom_path)
@@ -283,7 +282,7 @@ class DicomToNiftiConverter:
             json.dump(metadata, f, indent=2)
         os.rename(temp_meta, metadata_path)
         
-        print(f"✓ Cached NIfTI saved: {os.path.basename(nifti_path)}")
+        # Silent conversion complete
         return nifti_path
     
     def get_cached_metadata(self, nifti_path: str) -> Optional[Dict[str, Any]]:
@@ -315,7 +314,6 @@ class DicomToNiftiConverter:
         if os.path.exists(self.cache_dir):
             shutil.rmtree(self.cache_dir)
             os.makedirs(self.cache_dir, exist_ok=True)
-            print(f"Cache cleared: {self.cache_dir}")
 
 
 # Global converter instance
