@@ -1,91 +1,22 @@
 """
 DICOM to NIfTI Conversion Module
-Best practices for medical image format conversion with metadata preservation.
+Simple in-memory conversion without caching complexity.
 """
 
 import os
-import hashlib
-import json
 import numpy as np
 import nibabel as nib
 import pydicom
-from pathlib import Path
-from typing import Tuple, Optional, Dict, Any
+from typing import Tuple, Dict, Any
 
 
 class DicomToNiftiConverter:
     """
-    Handles DICOM to NIfTI conversion with caching and metadata preservation.
+    Handles DICOM to NIfTI conversion with in-memory processing.
     
-    Performance optimization: Pre-converting DICOM to NIfTI eliminates the need
-    for repeated file system operations (100+ reads per slice in DICOM series).
-    
-    Best practices implemented:
-    1. SHA256 hashing for cache invalidation
-    2. Affine matrix computation from DICOM metadata
-    3. Atomic writes with temporary files
-    4. Metadata preservation in JSON sidecar
-    5. Thread-safe caching with file locks
+    Design philosophy: Simple and robust over complex caching.
+    Converts DICOM → NIfTI in memory, writes to temp output location.
     """
-    
-    def __init__(self, cache_dir: Optional[str] = None):
-        """
-        Initialize converter with cache directory.
-        
-        Args:
-            cache_dir: Path to cache directory. Defaults to './output/.dicom_cache'
-        """
-        self.cache_dir = cache_dir or os.path.join(os.getcwd(), 'output', '.dicom_cache')
-        os.makedirs(self.cache_dir, exist_ok=True)
-        
-    def _compute_dicom_hash(self, path: str) -> str:
-        """
-        Compute SHA256 hash of DICOM data for cache validation.
-        
-        For directories: hashes sorted filenames and file sizes
-        For files: hashes file content
-        
-        Args:
-            path: DICOM file or directory path
-            
-        Returns:
-            Hexadecimal hash string
-        """
-        hasher = hashlib.sha256()
-        
-        if os.path.isdir(path):
-            # Hash directory contents (filename + size)
-            dicom_files = sorted([
-                f for f in os.listdir(path) 
-                if f.lower().endswith(('.dcm', '.dicom'))
-            ])
-            
-            for filename in dicom_files:
-                file_path = os.path.join(path, filename)
-                hasher.update(filename.encode())
-                hasher.update(str(os.path.getsize(file_path)).encode())
-                
-        else:
-            # Hash file content (first 64KB + size for speed)
-            with open(path, 'rb') as f:
-                hasher.update(f.read(65536))  # First 64KB
-                hasher.update(str(os.path.getsize(path)).encode())
-                
-        return hasher.hexdigest()
-    
-    def _get_cached_path(self, dicom_hash: str) -> Tuple[str, str]:
-        """
-        Get cached NIfTI file paths.
-        
-        Args:
-            dicom_hash: Hash of source DICOM
-            
-        Returns:
-            Tuple of (nifti_path, metadata_path)
-        """
-        nifti_path = os.path.join(self.cache_dir, f"{dicom_hash}.nii.gz")
-        metadata_path = os.path.join(self.cache_dir, f"{dicom_hash}_meta.json")
-        return nifti_path, metadata_path
     
     def _compute_affine_from_dicom(self, dicom_datasets: list) -> np.ndarray:
         """
@@ -232,18 +163,17 @@ class DicomToNiftiConverter:
         
         return volume, affine, metadata
     
-    def convert_and_cache(self, dicom_path: str, force_reconvert: bool = False) -> str:
+    def convert_to_nifti(self, dicom_path: str) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Convert DICOM to NIfTI with caching.
+        Convert DICOM to NIfTI format in memory (no caching).
         
-        This is the main public method. Checks cache first, converts if needed.
+        Simple and robust: converts once per session, no disk cache complexity.
         
         Args:
             dicom_path: Path to DICOM file or directory
-            force_reconvert: If True, ignores cache and reconverts
             
         Returns:
-            Path to cached NIfTI file (.nii.gz)
+            Tuple of (volume_array, affine_matrix)
             
         Raises:
             FileNotFoundError: If DICOM path doesn't exist
@@ -252,68 +182,13 @@ class DicomToNiftiConverter:
         if not os.path.exists(dicom_path):
             raise FileNotFoundError(f"DICOM path not found: {dicom_path}")
         
-        # Compute hash for cache lookup
-        dicom_hash = self._compute_dicom_hash(dicom_path)
-        nifti_path, metadata_path = self._get_cached_path(dicom_hash)
-        
-        # Check cache
-        if not force_reconvert and os.path.exists(nifti_path) and os.path.exists(metadata_path):
-            # Silent cache hit
-            return nifti_path
-        
-        # Convert DICOM (silent)
-        
+        # Convert DICOM based on type
         if os.path.isdir(dicom_path):
-            volume, affine, metadata = self._convert_dicom_series(dicom_path)
+            volume, affine, _ = self._convert_dicom_series(dicom_path)
         else:
-            volume, affine, metadata = self._convert_dicom_single_file(dicom_path)
+            volume, affine, _ = self._convert_dicom_single_file(dicom_path)
         
-        # Save NIfTI with atomic write (temp file + rename)
-        temp_nifti = nifti_path + '.tmp'
-        nifti_img = nib.Nifti1Image(volume, affine)
-        nib.save(nifti_img, temp_nifti)
-        os.rename(temp_nifti, nifti_path)  # Atomic operation
-        
-        # Save metadata
-        metadata['cache_hash'] = dicom_hash
-        metadata['original_path'] = dicom_path
-        temp_meta = metadata_path + '.tmp'
-        with open(temp_meta, 'w') as f:
-            json.dump(metadata, f, indent=2)
-        os.rename(temp_meta, metadata_path)
-        
-        # Silent conversion complete
-        return nifti_path
-    
-    def get_cached_metadata(self, nifti_path: str) -> Optional[Dict[str, Any]]:
-        """
-        Retrieve metadata for a cached NIfTI file.
-        
-        Args:
-            nifti_path: Path to cached NIfTI file
-            
-        Returns:
-            Metadata dictionary or None if not found
-        """
-        # Extract hash from filename
-        basename = os.path.basename(nifti_path)
-        if not basename.endswith('.nii.gz'):
-            return None
-        
-        cache_hash = basename.replace('.nii.gz', '')
-        metadata_path = os.path.join(self.cache_dir, f"{cache_hash}_meta.json")
-        
-        if os.path.exists(metadata_path):
-            with open(metadata_path, 'r') as f:
-                return json.load(f)
-        return None
-    
-    def clear_cache(self):
-        """Remove all cached NIfTI files."""
-        import shutil
-        if os.path.exists(self.cache_dir):
-            shutil.rmtree(self.cache_dir)
-            os.makedirs(self.cache_dir, exist_ok=True)
+        return volume, affine
 
 
 # Global converter instance

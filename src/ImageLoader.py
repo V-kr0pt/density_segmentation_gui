@@ -365,7 +365,7 @@ class UnifiedImageLoader:
     Unified Interface for all formats with automatic DICOM→NIfTI conversion.
     
     Performance optimization: DICOM inputs are automatically converted to NIfTI
-    and cached, eliminating 100× I/O overhead in slice-by-slice processing.
+    in memory, eliminating 100× I/O overhead in slice-by-slice processing.
     """
 
     @staticmethod
@@ -374,7 +374,7 @@ class UnifiedImageLoader:
         Load medical image volume with automatic DICOM conversion.
         
         DICOM files/directories are automatically converted to NIfTI format
-        and cached for 50-200× faster subsequent operations.
+        in memory for 50-200× faster subsequent operations.
         
         Args:
             file_path: Path to NIfTI file, DICOM file, or DICOM directory
@@ -382,18 +382,20 @@ class UnifiedImageLoader:
         Returns:
             Tuple of (volume, affine, original_shape)
         """
-        # Auto-convert DICOM to NIfTI
+        # Auto-convert DICOM to NIfTI in memory
         if os.path.isdir(file_path):
-            # DICOM series directory
+            # DICOM series directory - convert in memory
             converter = get_converter()
-            nifti_path = converter.convert_and_cache(file_path)
-            return NiftiLoader.load_volume(nifti_path)
+            volume, affine = converter.convert_to_nifti(file_path)
+            original_shape = volume.shape
+            return volume, affine, original_shape
             
         elif file_path.lower().endswith(('.dcm', '.dicom')):
-            # Single DICOM file
+            # Single DICOM file - convert in memory
             converter = get_converter()
-            nifti_path = converter.convert_and_cache(file_path)
-            return NiftiLoader.load_volume(nifti_path)
+            volume, affine = converter.convert_to_nifti(file_path)
+            original_shape = volume.shape
+            return volume, affine, original_shape
             
         elif file_path.lower().endswith(('.nii', '.nii.gz')):
             # Already NIfTI
@@ -407,8 +409,8 @@ class UnifiedImageLoader:
         """
         Optimized slice loading with automatic DICOM conversion.
         
-        DICOM inputs are converted once and cached. All subsequent slice
-        operations use fast NIfTI memory-mapped access (1 read vs 100+ reads).
+        DICOM inputs are converted to NIfTI in memory on first access.
+        All subsequent slice operations in the same session use the in-memory volume.
         
         Args:
             file_path: Path to NIfTI file, DICOM file, or DICOM directory
@@ -417,18 +419,36 @@ class UnifiedImageLoader:
         Returns:
             tuple: (slice_data, affine, original_shape, slice_index_used)
         """
-        # Auto-convert DICOM to NIfTI
+        # Auto-convert DICOM to NIfTI in memory
         if os.path.isdir(file_path):
-            # DICOM series directory
+            # DICOM series directory - convert and extract slice
             converter = get_converter()
-            nifti_path = converter.convert_and_cache(file_path)
-            return NiftiLoader.load_slice(nifti_path, slice_index)
+            volume, affine = converter.convert_to_nifti(file_path)
+            original_shape = volume.shape
+            
+            # Calculate central slice if not specified
+            if slice_index is None:
+                slice_index = original_shape[0] // 2
+            elif slice_index >= original_shape[0]:
+                raise ValueError(f"Slice index {slice_index} out of range. Volume has {original_shape[0]} slices.")
+            
+            slice_data = volume[slice_index, :, :]
+            return slice_data, affine, original_shape, slice_index
             
         elif file_path.lower().endswith(('.dcm', '.dicom')):
-            # Single DICOM file
+            # Single DICOM file - convert and extract slice
             converter = get_converter()
-            nifti_path = converter.convert_and_cache(file_path)
-            return NiftiLoader.load_slice(nifti_path, slice_index)
+            volume, affine = converter.convert_to_nifti(file_path)
+            original_shape = volume.shape
+            
+            # Calculate central slice if not specified
+            if slice_index is None:
+                slice_index = original_shape[0] // 2
+            elif slice_index >= original_shape[0]:
+                raise ValueError(f"Slice index {slice_index} out of range. Volume has {original_shape[0]} slices.")
+            
+            slice_data = volume[slice_index, :, :]
+            return slice_data, affine, original_shape, slice_index
             
         elif file_path.lower().endswith(('.nii', '.nii.gz')):
             # Already NIfTI
