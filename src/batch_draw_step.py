@@ -134,9 +134,9 @@ def batch_draw_step():
         return
 
     # Load image in NATIVE orientation
-    image_slice, affine, original_shape, slice_index = UnifiedImageLoader.load_slice(file_path)
+    image_slice, affine, original_shape, slice_index, img_type = UnifiedImageLoader.load_slice(file_path)
     
-    print(f"=== File: {current_file} ===")
+    print(f"=== File: {current_file} type: {img_type} ===")
     print(f"Original shape: {original_shape}")
     print(f"Loaded slice shape: {image_slice.shape}")
     print(f"Slice index: {slice_index}")
@@ -149,6 +149,7 @@ def batch_draw_step():
         st.session_state["original_shape"] = original_shape
         st.session_state["slice_index"] = slice_index
         st.session_state["current_batch_file"] = current_file
+        st.session_state["img_type"] = img_type
         st.session_state["native_polygons"] = []
         # Clear other file-specific data
         for key in ["mask", "result", "create_mask", "display_transform"]:
@@ -164,7 +165,7 @@ def batch_draw_step():
     transform = st.session_state["display_transform"]
     
     # Prepare image for display
-    pil_image = transform.prepare_for_display(image_slice, max_width=1200, max_height=800)
+    pil_image = transform.prepare_for_display(image_slice, img_type=img_type, max_width=1200, max_height=800)
     rotated_width, rotated_height = pil_image.size
 
     # --- Drawing Canvas ---
@@ -235,24 +236,22 @@ def batch_draw_step():
             for key in ["mask", "result", "create_mask"]:
                 if key in st.session_state:
                     del st.session_state[key]
-        else:
+        else:         
             # Extract polygons from canvas and convert to native coordinates
             native_polygons = []
-            
+
             for obj in objects:
                 if obj["type"] == "path":
                     poly = obj["path"]
                     # Extract canvas coordinates
-                    canvas_points = [(int(p[1]), int(p[2])) for p in poly if len(p) == 3]
-                    
+                    canvas_points = [(int(p[1]), int(p[2])) for p in poly if len(p) == 3]  # (x, y)
+
                     # Convert to native image coordinates using DisplayTransform
-                    native_points = transform.canvas_to_native_coords(
-                        canvas_points, rotated_width, rotated_height
-                    )
+                    native_points = transform.canvas_to_native_coords(canvas_points)
                     
                     if len(native_points) >= 3:
                         native_polygons.append(native_points)
-            
+        
             # Save native polygons to session state
             st.session_state["native_polygons"] = native_polygons
 
@@ -283,9 +282,9 @@ def batch_draw_step():
         st.markdown("### 👁️ Mask Preview")
         col1, col2 = st.columns(2)
 
-        # Display with rotation for visualization consistency
-        present_img = ImageProcessor.normalize_image(np.rot90(image_slice))
-        present_result = ImageProcessor.normalize_image(np.rot90(st.session_state["result"]))
+        # Build display versions using the same transform logic
+        present_img = transform.prepare_for_display(image_slice, img_type=st.session_state["img_type"])
+        present_result = transform.prepare_for_display(st.session_state["result"], img_type=st.session_state["img_type"])
 
         with col1:
             st.image(present_img, caption="Original Image", use_container_width=True)
@@ -300,6 +299,7 @@ def batch_draw_step():
                     mask_2d=st.session_state["mask"],
                     original_shape=st.session_state["original_shape"],
                     affine=st.session_state["affine"],
+                    img_type=st.session_state["img_type"],
                     file_path=st.session_state["output_path"]
                 )
                 
@@ -312,7 +312,7 @@ def batch_draw_step():
                 # Clear current file session state
                 keys_to_clear = ["display_transform", "mask", "result", "create_mask",
                                "affine", "original_image_path", "slice_index", "output_path",
-                               "original_shape", "current_batch_file", "native_polygons"]
+                               "original_shape", "current_batch_file", "native_polygons", "img_type"]
                 for key in keys_to_clear:
                     if key in st.session_state:
                         del st.session_state[key]
