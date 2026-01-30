@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import streamlit as st
 from ImageLoader import UnifiedImageLoader
-from new_utils import ThresholdOperator, ImageProcessor
+from new_utils import ThresholdOperator, ImageProcessor, DisplayTransform, resolve_dense_mask_path
 
 
 def batch_threshold_step():
@@ -136,8 +136,9 @@ def batch_threshold_step():
     # Use main input folder selected in Step 1
     input_folder = st.session_state.get("main_input_folder", os.path.join(os.getcwd(), "media"))
     output_path = os.path.join(os.getcwd(), "output", current_file_name)
-    mask_path = os.path.join(output_path, "dense.nii")
     original_image_path = os.path.join(input_folder, current_file)
+    is_dicom = os.path.isdir(original_image_path) or original_image_path.lower().endswith((".dcm", ".dicom"))
+    mask_path = resolve_dense_mask_path(output_path, prefer_dicom=is_dicom)
 
     if not os.path.exists(input_folder):
         st.error(f"The selected main input folder does not exist: {input_folder}")
@@ -147,8 +148,8 @@ def batch_threshold_step():
     # =====================================================
     # File existence and image loading 
     # =====================================================
-    if not os.path.exists(mask_path):
-        st.error(f"Mask file not found: {mask_path}")
+    if mask_path is None:
+        st.error("Mask file not found for this case.")
         st.write("This file may not have completed the draw step properly.")
         if st.button("Skip this file"):
             st.session_state["batch_current_index"] = current_index + 1
@@ -156,10 +157,16 @@ def batch_threshold_step():
         return
 
     try:
-        img, _, _, _ = UnifiedImageLoader.load_slice(original_image_path)
-        img_show = np.rot90(ImageProcessor.normalize_image(img)) # to show on GUI
-        msk, _, _, _ = UnifiedImageLoader.load_slice(mask_path)
-        msk_show = np.rot90(msk)
+        img, _, _, _, img_type = UnifiedImageLoader.load_slice(original_image_path)
+        msk, _, _, _, _ = UnifiedImageLoader.load_slice(mask_path)
+        img_show = ImageProcessor.normalize_image(img)
+        msk_show = msk
+        # Match display orientation from draw step (rotate only for NIfTI)
+        display_transform = DisplayTransform(padding=0)
+        display_transform.set_rotation_for_type(img_type)
+        if display_transform.rotate_k % 4 != 0:
+            img_show = np.rot90(img_show, k=display_transform.rotate_k)
+            msk_show = np.rot90(msk_show, k=display_transform.rotate_k)
     except Exception as e:
         st.error(f"Error loading images: {str(e)}")
         if st.button("Skip this file"):

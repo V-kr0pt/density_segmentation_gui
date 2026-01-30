@@ -1,6 +1,7 @@
 import os
 import streamlit as st
 import json
+from new_utils import resolve_dense_mask_path, resolve_final_mask_path
 
 
 # =============================
@@ -56,9 +57,8 @@ def file_selection_step():
             if not os.path.isdir(folder_path):
                 continue
 
-            # Draw step: completed if dense.nii exists
-            dense_path = os.path.join(folder_path, "dense.nii")
-            if os.path.exists(dense_path):
+            # Draw step: completed if dense mask exists (NIfTI or DICOM)
+            if resolve_dense_mask_path(folder_path) is not None:
                 actual_progress["draw"].append(folder_name)
 
             # Threshold step: completed if threshold.json exists and contains 'threshold'
@@ -72,9 +72,8 @@ def file_selection_step():
                 except Exception as e:
                     st.warning(f"Could not read threshold for {folder_name}: {e}")
 
-            # Process step: completed if mask.nii exists in dense_mask subfolder
-            mask_path = os.path.join(folder_path, "dense_mask", "mask.nii")
-            if os.path.exists(mask_path):
+            # Process step: completed if final mask exists (NIfTI or DICOM)
+            if resolve_final_mask_path(folder_path) is not None:
                 actual_progress["process"].append(folder_name)
 
     st.session_state["batch_completed_files"] = actual_progress
