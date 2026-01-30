@@ -181,13 +181,15 @@ class DicomLoader(BaseImageLoader):
                 slice_spacing = 1.0
 
         aff = np.eye(4, dtype=np.float32)
-        # Indexing is (k, r, c)
+        # Indexing is (k, r, c) in LPS
         aff[:3, 0] = slice_cos * slice_spacing
         aff[:3, 1] = row_cos * row_spacing
         aff[:3, 2] = col_cos * col_spacing
         aff[:3, 3] = np.array(ipp0, dtype=np.float32)
 
-        return aff
+        # Convert LPS (DICOM) -> RAS (NIfTI) so viewers align correctly.
+        lps_to_ras = np.diag([-1.0, -1.0, 1.0, 1.0]).astype(np.float32)
+        return lps_to_ras @ aff
 
     # -----------------------------
     # Public API (DO NOT break)
@@ -280,29 +282,8 @@ class DicomLoader(BaseImageLoader):
 
         original_shape = volume.shape
 
-        # Best-effort affine for single-file
-        affine = np.eye(4, dtype=np.float32)
-        try:
-            iop = DicomLoader._safe_float_list(ds, "ImageOrientationPatient", 6)
-            ipp = DicomLoader._safe_float_list(ds, "ImagePositionPatient", 3)
-            ps = DicomLoader._safe_float_list(ds, "PixelSpacing", 2)
-            if iop is not None and ipp is not None and ps is not None:
-                row_cos = np.array(iop[:3], dtype=np.float32)
-                col_cos = np.array(iop[3:], dtype=np.float32)
-                slice_cos = np.cross(row_cos, col_cos).astype(np.float32)
-
-                row_spacing = float(ps[0])
-                col_spacing = float(ps[1])
-                slice_spacing = float(getattr(ds, "SliceThickness", 1.0))
-
-                affine = np.eye(4, dtype=np.float32)
-                affine[:3, 0] = slice_cos * slice_spacing
-                affine[:3, 1] = row_cos * row_spacing
-                affine[:3, 2] = col_cos * col_spacing
-                affine[:3, 3] = np.array(ipp, dtype=np.float32)
-        except Exception as e:
-            return e
-
+        # Best-effort affine for single-file (converted to RAS)
+        affine = DicomLoader._compute_affine_series(ds0=ds, ds1=None)
 
         return volume, affine, original_shape, DicomLoader.img_type
 
@@ -324,26 +305,8 @@ class DicomLoader(BaseImageLoader):
 
         arr = ds.pixel_array
 
-        # Best-effort affine
-        affine = np.eye(4, dtype=np.float32)
-
-        iop = DicomLoader._safe_float_list(ds, "ImageOrientationPatient", 6)
-        ipp = DicomLoader._safe_float_list(ds, "ImagePositionPatient", 3)
-        ps = DicomLoader._safe_float_list(ds, "PixelSpacing", 2)
-        if iop is not None and ipp is not None and ps is not None:
-            row_cos = np.array(iop[:3], dtype=np.float32)
-            col_cos = np.array(iop[3:], dtype=np.float32)
-            slice_cos = np.cross(row_cos, col_cos).astype(np.float32)
-
-            row_spacing = float(ps[0])
-            col_spacing = float(ps[1])
-            slice_spacing = float(getattr(ds, "SliceThickness", 1.0))
-
-            affine = np.eye(4, dtype=np.float32)
-            affine[:3, 0] = slice_cos * slice_spacing
-            affine[:3, 1] = row_cos * row_spacing
-            affine[:3, 2] = col_cos * col_spacing
-            affine[:3, 3] = np.array(ipp, dtype=np.float32)
+        # Best-effort affine (converted to RAS)
+        affine = DicomLoader._compute_affine_series(ds0=ds, ds1=None)
 
         # Case A: single 2D
         if arr.ndim == 2:

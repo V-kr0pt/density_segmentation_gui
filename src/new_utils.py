@@ -1,6 +1,7 @@
 import numpy as np
 import nibabel as nib
 import re
+from PIL import Image
 import os
 import cv2
 import matplotlib.pyplot as plt
@@ -32,106 +33,122 @@ class ImageProcessor:
 class DisplayTransform:
     """
     Tracks and applies/reverses display transformations.
-    
-    Key principle: Keep images in native orientation, only transform for display,
-    and properly inverse transform coordinates back to native space.
+
+    Principle:
+      - Keep images in NATIVE orientation for all computations/saving.
+      - Apply ONLY display transforms for GUI.
+      - Always invert transforms for canvas->native coordinates.
     """
-    
-    def __init__(self, padding=50):
-        """
-        Initialize display transformation tracker.
-        
-        Args:
-            padding: padding pixels to add around image
-        """
+
+    def __init__(self, padding=50, rotate_k=0):
+        # rotate_k: np.rot90 k-value applied for DISPLAY (0,1,2,3)
         self.padding = padding
         self.scale = 1.0
         self.padded_shape = None
         self.original_shape = None
-        
-    def prepare_for_display(self, image, max_width=1200, max_height=800):
+        self.rotate_k = rotate_k  # display rotation
+
+    def set_rotation_for_type(self, img_type: str):
         """
-        Prepares image for display by padding, scaling, and rotating.
-        TRACKS all transformations for later reversal.
-        
-        Args:
-            image: 2D numpy array in NATIVE orientation
-            max_width: maximum display width
-            max_height: maximum display height
-            
-        Returns:
-            PIL.Image: transformed image ready for canvas display
+        Define display rotation by image type.
+
+        For your case:
+          - NIfTI should be displayed rotated -90° (clockwise) -> np.rot90(k=3)
+          - DICOM displayed as-is -> k=0
         """
-        from PIL import Image
+        self.rotate_k = 1 if img_type == "nii" else 0
+
+    @staticmethod
+    def _rot90_inverse_rc(rp, cp, H, W, k):
+        """
+        Inverse mapping of np.rot90 for indices.
+        Given (rp,cp) in rotated image, return (r,c) in original image.
+        """
+        k = k % 4
+        if k == 0:
+            return rp, cp
+        if k == 1:
+            # rot90 CCW: (r,c)->(W-1-c, r)  => inverse: (rp,cp)->(cp, W-1-rp)
+            return cp, (W - 1 - rp)
+        if k == 2:
+            # 180: (r,c)->(H-1-r, W-1-c) => inverse same
+            return (H - 1 - rp), (W - 1 - cp)
+        # k == 3 (CW): (r,c)->(c, H-1-r) => inverse: (rp,cp)->(H-1-cp, rp)
+        return (H - 1 - cp), rp
+
+    def prepare_for_display(self, image, img_type: str, max_width=1200, max_height=800):
+        """
+        Prepare image for canvas display:
+          1) pad
+          2) normalize
+          3) rotate (DISPLAY ONLY)
+          4) scale to fit
+        """
         
-        self.original_shape = image.shape  # Store native shape
-        
-        # Step 1: Pad the image
-        padded_image = np.pad(
+
+        self.original_shape = image.shape
+
+        # 1) pad (native)
+        padded = np.pad(
             image,
             pad_width=((self.padding, self.padding), (self.padding, self.padding)),
             mode="constant",
-            constant_values=0
+            constant_values=0,
         )
-        self.padded_shape = padded_image.shape
-        
-        # Step 2: Normalize for display
-        padded_image = ImageProcessor.normalize_image(padded_image)
-        
-        # Step 3: Calculate scale to fit in display area
-        orig_height, orig_width = padded_image.shape
-        self.scale = min(max_width / orig_width, max_height / orig_height, 1)
-        
-        # Step 4: Resize
-        pil_height = int(padded_image.shape[0] * self.scale)
-        pil_width = int(padded_image.shape[1] * self.scale)
-        pil_image = Image.fromarray(padded_image).resize((pil_width, pil_height))
-        
-        # Step 5: Rotate 90 degrees for canvas display
-        pil_image = pil_image.rotate(90, expand=True)
-        
-        return pil_image
-    
-    def canvas_to_native_coords(self, canvas_points, rotated_width, rotated_height):
+        self.padded_shape = padded.shape
+
+        # 2) normalize (display)
+        padded = ImageProcessor.normalize_image(padded)
+
+        # 3) rotate for display (no effect on native computations)
+        self.set_rotation_for_type(img_type)
+        if self.rotate_k % 4 != 0:
+            padded = np.rot90(padded, k=self.rotate_k)
+
+        # 4) scale
+        H, W = padded.shape
+        self.scale = min(max_width / W, max_height / H, 1.0)
+
+        pil_h = int(H * self.scale)
+        pil_w = int(W * self.scale)
+        return Image.fromarray(padded).resize((pil_w, pil_h))
+
+    def canvas_to_native_coords(self, canvas_points):
         """
-        Converts polygon points from canvas coordinates back to NATIVE image coordinates.
-        
-        This is the INVERSE of all display transformations:
-        1. Undo rotation (90 degrees)
-        2. Undo scaling
-        3. Undo padding
-        
-        Args:
-            canvas_points: list of (x, y) tuples from canvas
-            rotated_width: width of rotated canvas
-            rotated_height: height of rotated canvas
-            
-        Returns:
-            list of (row, col) tuples in NATIVE image coordinates
+        Convert canvas (x,y) -> native (row,col).
+
+        Inverse steps:
+          1) undo scaling -> rotated+padded coords
+          2) undo rotation -> padded coords
+          3) undo padding -> native coords
         """
         native_points = []
-        
+
+        # Shape before rotation (padded native)
+        Hp, Wp = self.padded_shape
+
+        # Shape after rotation (display array)
+        if self.rotate_k % 2 == 1:
+            Hr, Wr = (Wp, Hp)  # swapped
+        else:
+            Hr, Wr = (Hp, Wp)
+
         for x, y in canvas_points:
-            # Step 1: Undo rotation (90 degrees clockwise)
-            # After rotation: canvas(x, y) -> pre-rotation(rotated_height - y, x)
-            px = rotated_height - y
-            py = x
-            
-            # Step 2: Undo scaling
-            px = px / self.scale
-            py = py / self.scale
-            
-            # Step 3: Undo padding
-            px -= self.padding
-            py -= self.padding
-            
-            # Step 4: Clamp to valid image coordinates
-            px = int(np.clip(px, 0, self.original_shape[0] - 1))
-            py = int(np.clip(py, 0, self.original_shape[1] - 1))
-            
-            native_points.append((px, py))
-        
+            # 1) undo scaling: canvas pixels -> rotated array indices (row/col)
+            rp = int(np.clip(y / self.scale, 0, Hr - 1))
+            cp = int(np.clip(x / self.scale, 0, Wr - 1))
+
+            # 2) undo rotation: rotated -> padded(native)
+            r_pad, c_pad = self._rot90_inverse_rc(rp, cp, Hp, Wp, self.rotate_k)
+
+            # 3) undo padding: padded -> native
+            r = int(np.clip(r_pad - self.padding, 0, self.original_shape[0] - 1))
+            c = int(np.clip(c_pad - self.padding, 0, self.original_shape[1] - 1))
+
+            native_points.append((r, c))
+
         return native_points
+
 
 
 class MaskManager:
@@ -153,15 +170,16 @@ class MaskManager:
         """
         if len(points) < 3:
             raise ValueError("At least 3 points are required to create a polygon mask.")
-        
-        # Create mask in same orientation as image
+
         mask = np.zeros_like(image, dtype=np.uint8)
-        pts = np.array([points], dtype=np.int32)
+
+        # OpenCV expects (x, y) = (col, row)
+        pts_xy = np.array([[(c, r) for (r, c) in points]], dtype=np.int32)
+
         mask = np.ascontiguousarray(mask)
-        cv2.fillPoly(mask, pts, 255)
-        
-        # Apply mask to image
-        result = cv2.bitwise_and(image, image, mask=mask)
+        cv2.fillPoly(mask, pts_xy, 255)
+
+        result = image * (mask > 0)
         return result, mask
     
     @staticmethod
@@ -184,100 +202,18 @@ class MaskManager:
                 _, mask = MaskManager.create_mask(image, poly)
                 combined_mask = np.maximum(combined_mask, mask)  # Union
         
-        result = cv2.bitwise_and(image, image, mask=combined_mask)
+        result = image * (combined_mask > 0)
+        #result = cv2.bitwise_and(image, image, mask=combined_mask)
         return result, combined_mask
     
     @staticmethod
     def measure_mask_area(mask):
         """Return number of non-zero pixels in mask."""
         return np.count_nonzero(mask)
-    
-    @staticmethod 
-    def create_final_mask(folder_path, original_shape, original_affine):
-        """
-        Creates a 3D NIfTI mask from processed slice arrays.
-
-        Args:
-            folder_path: directory containing .npy slice files
-            original_shape: 3D shape of original volume
-            original_affine: affine matrix from original volume
-
-        Returns:
-            str: path to saved mask.nii file
-        """
-        
-        mask_path = os.path.join(folder_path, 'mask.nii')
-
-        # Load and sort NPY files
-        npy_files = [f for f in os.listdir(folder_path) if f.endswith('.npy')]
-        if not npy_files:
-            raise FileNotFoundError(f"No NPY files found in {folder_path}")
-
-        # Sort files numerically by slice index to preserve correct order
-        def extract_slice_index(filename):
-            """Extract slice index from filename like 'slice_0005_threshold_0.38.npy'"""
-            match = re.search(r'slice_(\d+)', filename)
-            return int(match.group(1)) if match else 0
-
-        npy_files.sort(key=extract_slice_index)
-
-        images = []
-        for f in npy_files:
-            array = np.load(os.path.join(folder_path, f))
-            images.append(array)
-
-        print(f"Loaded {len(images)} PNG slices")
-        print(f"Original shape: {original_shape}")
-        print(f"PNG image shape: {images[0].shape}")
-
-        # Identify slice dimension in original volume (smallest dimension)
-        slice_dim = np.argmin(original_shape)
-        num_slices_original = original_shape[slice_dim]
-        num_slices_png = len(images)
-
-        assert num_slices_png == num_slices_original, "Something wrong happened: The number of .png files is diferent from the number of slices in original volume image."
-
-
-        # Get spatial dimensions from original volume (the two non-slice dimensions)
-        spatial_dims = [i for i in range(3) if i != slice_dim]
-        original_spatial_shape = (original_shape[spatial_dims[0]], original_shape[spatial_dims[1]])
-
-        print(f"Original spatial dimensions: {original_spatial_shape}")
-        print(f"Numpy spatial dimensions: {images[0].shape}")
-
-        # Stack with proper orientation
-        volume = MaskManager._stack_arrays_preserving_orientation(images, original_shape)
-
-        print(f"Final volume shape: {volume.shape}")
-        print(f"Target shape: {original_shape}")
-        
-        # Convert to binary (0 and 1)
-        volume_binary = (volume > 0).astype(np.uint8)
-
-        # --- FIX: correct flipped orientation (Z-axis flip) ---
-        volume_binary = np.flip(volume_binary, axis=2)
-        
-        # Save NIfTI
-        mask_nii = nib.Nifti1Image(volume_binary, original_affine)
-        nib.save(mask_nii, mask_path)        
-        print(f"Mask successfully saved to {mask_path}")
-
-        # Clean up temporary .npy files
-        print(f"Cleaning up {len(npy_files)} temporary .npy files...")
-        for f in npy_files:
-            npy_path = os.path.join(folder_path, f)
-            try:
-                os.remove(npy_path)
-            except Exception as e:
-                print(f"Warning: Could not remove {f}: {e}")
-
-        print(f"Cleanup complete. Temporary files removed.")
-        
-        return mask_path
-        
+           
 
     @staticmethod
-    def save_mask(mask_2d, original_shape, affine, file_path, file_name="dense.nii"):
+    def save_mask(mask_2d, original_shape, affine, file_path, img_type, file_name="dense.nii"):
         """
         Saves a 2D mask as a 3D NIfTI file in NATIVE orientation.
         
@@ -298,6 +234,15 @@ class MaskManager:
             raise ValueError(f"original_shape must be 3D, got {len(original_shape)}D")
         
         os.makedirs(file_path, exist_ok=True)
+
+        # Ensure binary values (0/1) for saved mask
+        mask_2d = (mask_2d > 0).astype(np.uint8)
+
+        if img_type == "DICOM":
+            print("Detected DICOM image!")
+            #mask_2d = np.flipud(mask_2d)
+            #mask_2d = np.rot90(mask_2d, k=1)
+
         
         # Identify which dimension contains slices (usually smallest)
         slice_dim = np.argmin(original_shape)
@@ -319,16 +264,20 @@ class MaskManager:
         # Create 3D volume by replicating mask across all slices
         mask_3d = np.zeros(original_shape, dtype=np.uint8)
         
+        #if img_type == "DICOM":
+        #    mask_3d = mask_2d[np.newaxis, :, :].astype(np.uint8)
+        #else:
+            # Keep existing behavior for NIfTI / volumetric data
+        slice_dim = int(np.argmin(original_shape))
+        mask_3d = np.zeros(original_shape, dtype=np.uint8)
+
         if slice_dim == 0:
-            # Slices along first dimension: shape = (n_slices, height, width)
             for i in range(original_shape[0]):
                 mask_3d[i, :, :] = mask_2d
         elif slice_dim == 1:
-            # Slices along second dimension: shape = (height, n_slices, width)
             for i in range(original_shape[1]):
                 mask_3d[:, i, :] = mask_2d
-        else:  # slice_dim == 2
-            # Slices along third dimension: shape = (height, width, n_slices)
+        else:
             for i in range(original_shape[2]):
                 mask_3d[:, :, i] = mask_2d
         
