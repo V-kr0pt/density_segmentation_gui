@@ -11,7 +11,7 @@ import streamlit as st
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
 from ImageLoader import UnifiedImageLoader
-from new_utils import ThresholdOperator, MaskManager, resolve_dense_mask_path
+from new_utils import ThresholdOperator, MaskManager, DisplayTransform, resolve_dense_mask_path
 from performance_config import performance_config, get_system_info
 
 
@@ -90,7 +90,7 @@ class BatchProcessingManager:
             # Process all slices
             slice_results = self._process_slices_optimized(
                 original_image_path, mask_path, save_dir,
-                target_area, num_slices
+                target_area, num_slices, img_type
             )
             
             # Create final NIfTI file from processed slices
@@ -122,7 +122,7 @@ class BatchProcessingManager:
             }
     
     def _process_slices_optimized(self, original_image_path, mask_path, save_dir,
-                                 target_area, num_slices):
+                                 target_area, num_slices, img_type):
         """
         Process all slices with optimized chunking and memory management.
         Slices are processed in NATIVE orientation and saved as-is.
@@ -133,6 +133,9 @@ class BatchProcessingManager:
         compression_level = self.io_settings['compression_level']
         gc_frequency = self.performance_settings['gc_frequency']
         
+        display_transform = DisplayTransform(padding=0)
+        display_transform.set_rotation_for_type(img_type)
+
         for start_idx in range(0, num_slices, chunk_size):
             end_idx = min(start_idx + chunk_size, num_slices)
             
@@ -164,8 +167,11 @@ class BatchProcessingManager:
                     png_filename = f'slice_{slice_index:04d}_threshold_{adjusted_threshold:.2f}.png'
                     png_filepath = os.path.join(save_dir, png_filename)
                     
-                    # Apply rotation for PNG visualization (same as GUI display)
-                    binary_img_display = np.rot90(binary_image)
+                    # Apply rotation for PNG visualization (match GUI display)
+                    if display_transform.rotate_k % 4 != 0:
+                        binary_img_display = np.rot90(binary_image, k=display_transform.rotate_k)
+                    else:
+                        binary_img_display = binary_image
                     img_pil = Image.fromarray(binary_img_display, mode='L')
                     img_pil.save(png_filepath, optimize=True, compress_level=compression_level)
                     
