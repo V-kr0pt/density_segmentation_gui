@@ -58,9 +58,9 @@ class BatchProcessingManager:
                 raise FileNotFoundError(f"Mask not found: {mask_path}")
             
             # Load central slice to calculate target area
-            central_image_slice, original_affine, original_shape, central_slice_idx = \
+            central_image_slice, original_affine, original_shape, central_slice_idx, _ = \
                 UnifiedImageLoader.load_slice(original_image_path)
-            central_mask_slice, _, _, _ = UnifiedImageLoader.load_slice(mask_path, central_slice_idx)
+            central_mask_slice, _, _, _, _ = UnifiedImageLoader.load_slice(mask_path, central_slice_idx)
             
             # Calculate target area from central slice
             thresholded_img = ThresholdOperator.threshold_slice(
@@ -132,10 +132,10 @@ class BatchProcessingManager:
             for slice_index in range(start_idx, end_idx):
                 try:
                     # Load slice in NATIVE orientation
-                    image_slice, _, _, _ = UnifiedImageLoader.load_slice(
+                    image_slice, _, _, _, _ = UnifiedImageLoader.load_slice(
                         original_image_path, slice_index
                     )
-                    mask_slice, _, _, _ = UnifiedImageLoader.load_slice(
+                    mask_slice, _, _, _, _ = UnifiedImageLoader.load_slice(
                         mask_path, slice_index
                     )
                     
