@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import streamlit as st
 from ImageLoader import UnifiedImageLoader
-from new_utils import ThresholdOperator, ImageProcessor, resolve_dense_mask_path
+from new_utils import ThresholdOperator, ImageProcessor, DisplayTransform, resolve_dense_mask_path
 
 
 def batch_threshold_step():
@@ -157,10 +157,16 @@ def batch_threshold_step():
         return
 
     try:
-        img, _, _, _, _ = UnifiedImageLoader.load_slice(original_image_path)
-        img_show = np.rot90(ImageProcessor.normalize_image(img)) # to show on GUI
+        img, _, _, _, img_type = UnifiedImageLoader.load_slice(original_image_path)
         msk, _, _, _, _ = UnifiedImageLoader.load_slice(mask_path)
-        msk_show = np.rot90(msk)
+        img_show = ImageProcessor.normalize_image(img)
+        msk_show = msk
+        # Match display orientation from draw step (rotate only for NIfTI)
+        display_transform = DisplayTransform(padding=0)
+        display_transform.set_rotation_for_type(img_type)
+        if display_transform.rotate_k % 4 != 0:
+            img_show = np.rot90(img_show, k=display_transform.rotate_k)
+            msk_show = np.rot90(msk_show, k=display_transform.rotate_k)
     except Exception as e:
         st.error(f"Error loading images: {str(e)}")
         if st.button("Skip this file"):
