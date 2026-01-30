@@ -296,6 +296,8 @@ def batch_process_step():
     
     completed_threshold = st.session_state["batch_completed_files"]["threshold"]
     completed_process = st.session_state["batch_completed_files"]["process"]
+    batch_files_without_extension = [f.split('.')[0] for f in batch_files]
+    completed_process_filtered = [f for f in completed_process if f in batch_files_without_extension]
     
     # Filter files that have thresholds but not yet processed
     files_to_process = []
@@ -308,14 +310,14 @@ def batch_process_step():
     # Progress Display
     # =========================
     total_files = len(batch_files)
-    st.write(f"### Progress: {len(completed_process)}/{total_files} files processed")
-    st.progress(len(completed_process) / total_files)
+    st.write(f"### Progress: {len(completed_process_filtered)}/{total_files} files processed")
+    st.progress(len(completed_process_filtered) / total_files)
     st.markdown('</div>', unsafe_allow_html=True)
     
     # =========================
     # All Files Processed Message
     # =========================
-    if len(files_to_process) == 0 and len(completed_process) == total_files:
+    if len(files_to_process) == 0 and len(completed_process_filtered) == total_files:
         st.markdown("""
         <div class="success-container">
             <h4>🎉 All files have been processed successfully!</h4>
