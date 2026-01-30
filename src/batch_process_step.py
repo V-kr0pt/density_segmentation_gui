@@ -11,7 +11,7 @@ import streamlit as st
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
 from ImageLoader import UnifiedImageLoader
-from new_utils import ThresholdOperator, MaskManager
+from new_utils import ThresholdOperator, MaskManager, resolve_dense_mask_path
 from performance_config import performance_config, get_system_info
 
 
@@ -45,7 +45,8 @@ class BatchProcessingManager:
             # File paths setup
             original_image_path = os.path.join(input_folder, file)
             output_path = os.path.join(os.getcwd(), 'output', file_name)
-            mask_path = os.path.join(output_path, 'dense.nii')
+            is_dicom = os.path.isdir(original_image_path) or original_image_path.lower().endswith((".dcm", ".dicom"))
+            mask_path = resolve_dense_mask_path(output_path, prefer_dicom=is_dicom)
             save_dir = os.path.join(output_path, 'dense_mask')
             
             # Get threshold value
@@ -54,11 +55,11 @@ class BatchProcessingManager:
             # Validate file existence
             if not os.path.exists(original_image_path):
                 raise FileNotFoundError(f"Original image not found: {original_image_path}")
-            if not os.path.exists(mask_path):
-                raise FileNotFoundError(f"Mask not found: {mask_path}")
+            if mask_path is None:
+                raise FileNotFoundError("Mask not found for this case.")
             
             # Load central slice to calculate target area
-            central_image_slice, original_affine, original_shape, central_slice_idx, _ = \
+            central_image_slice, original_affine, original_shape, central_slice_idx, img_type = \
                 UnifiedImageLoader.load_slice(original_image_path)
             central_mask_slice, _, _, _, _ = UnifiedImageLoader.load_slice(mask_path, central_slice_idx)
             
@@ -93,7 +94,13 @@ class BatchProcessingManager:
             )
             
             # Create final NIfTI file from processed slices
-            nifti_path = MaskManager.create_final_mask(save_dir, original_shape, original_affine)
+            nifti_path = MaskManager.create_final_mask(
+                save_dir,
+                original_shape,
+                original_affine,
+                img_type=img_type,
+                original_image_path=original_image_path,
+            )
             
             return {
                 'success': True,

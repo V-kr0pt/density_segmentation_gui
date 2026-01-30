@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import streamlit as st
 from ImageLoader import UnifiedImageLoader
-from new_utils import ThresholdOperator, ImageProcessor
+from new_utils import ThresholdOperator, ImageProcessor, resolve_dense_mask_path
 
 
 def batch_threshold_step():
@@ -136,8 +136,9 @@ def batch_threshold_step():
     # Use main input folder selected in Step 1
     input_folder = st.session_state.get("main_input_folder", os.path.join(os.getcwd(), "media"))
     output_path = os.path.join(os.getcwd(), "output", current_file_name)
-    mask_path = os.path.join(output_path, "dense.nii")
     original_image_path = os.path.join(input_folder, current_file)
+    is_dicom = os.path.isdir(original_image_path) or original_image_path.lower().endswith((".dcm", ".dicom"))
+    mask_path = resolve_dense_mask_path(output_path, prefer_dicom=is_dicom)
 
     if not os.path.exists(input_folder):
         st.error(f"The selected main input folder does not exist: {input_folder}")
@@ -147,8 +148,8 @@ def batch_threshold_step():
     # =====================================================
     # File existence and image loading 
     # =====================================================
-    if not os.path.exists(mask_path):
-        st.error(f"Mask file not found: {mask_path}")
+    if mask_path is None:
+        st.error("Mask file not found for this case.")
         st.write("This file may not have completed the draw step properly.")
         if st.button("Skip this file"):
             st.session_state["batch_current_index"] = current_index + 1

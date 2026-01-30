@@ -300,7 +300,8 @@ def batch_draw_step():
                     original_shape=st.session_state["original_shape"],
                     affine=st.session_state["affine"],
                     img_type=st.session_state["img_type"],
-                    file_path=st.session_state["output_path"]
+                    file_path=st.session_state["output_path"],
+                    original_image_path=st.session_state["original_image_path"],
                 )
                 
                 # Mark file as completed

@@ -5,6 +5,55 @@ from PIL import Image
 import os
 import cv2
 import matplotlib.pyplot as plt
+import pydicom
+from pydicom.uid import generate_uid, ExplicitVRLittleEndian
+from pydicom.dataset import FileMetaDataset
+
+
+def resolve_dense_mask_path(output_path, prefer_dicom=False):
+    """
+    Resolve the saved dense mask path for either NIfTI or DICOM outputs.
+    Returns a file path or folder path, or None if not found.
+    """
+    if prefer_dicom:
+        candidates = [
+            os.path.join(output_path, "dense_dcm"),
+            os.path.join(output_path, "dense.dcm"),
+            os.path.join(output_path, "dense.nii"),
+        ]
+    else:
+        candidates = [
+            os.path.join(output_path, "dense.nii"),
+            os.path.join(output_path, "dense.dcm"),
+            os.path.join(output_path, "dense_dcm"),
+        ]
+    for path in candidates:
+        if os.path.isfile(path) or os.path.isdir(path):
+            return path
+    return None
+
+
+def resolve_final_mask_path(output_path, prefer_dicom=False):
+    """
+    Resolve the saved final mask path for either NIfTI or DICOM outputs.
+    Returns a file path or folder path, or None if not found.
+    """
+    if prefer_dicom:
+        candidates = [
+            os.path.join(output_path, "mask_dcm"),
+            os.path.join(output_path, "mask.dcm"),
+            os.path.join(output_path, "dense_mask", "mask.nii"),
+        ]
+    else:
+        candidates = [
+            os.path.join(output_path, "dense_mask", "mask.nii"),
+            os.path.join(output_path, "mask.dcm"),
+            os.path.join(output_path, "mask_dcm"),
+        ]
+    for path in candidates:
+        if os.path.isfile(path) or os.path.isdir(path):
+            return path
+    return None
 
 
 class ImageProcessor:
@@ -213,7 +262,15 @@ class MaskManager:
            
 
     @staticmethod
-    def save_mask(mask_2d, original_shape, affine, file_path, img_type, file_name="dense.nii"):
+    def save_mask(
+        mask_2d,
+        original_shape,
+        affine,
+        file_path,
+        img_type,
+        file_name="dense.nii",
+        original_image_path=None,
+    ):
         """
         Saves a 2D mask as a 3D NIfTI file in NATIVE orientation.
         
@@ -225,7 +282,8 @@ class MaskManager:
             original_shape (tuple): 3D shape of the original volume (e.g., (512, 512, 50))
             affine (numpy.ndarray): 4x4 affine transformation matrix from original image
             file_path (str): Directory path where mask will be saved
-            file_name (str): Output filename
+            file_name (str): Output filename for NIfTI
+            original_image_path (str): Original DICOM path (file or folder) for DICOM outputs
         
         Returns:
             str: Full path to saved mask file
@@ -240,8 +298,8 @@ class MaskManager:
 
         if img_type == "DICOM":
             print("Detected DICOM image!")
-            #mask_2d = np.flipud(mask_2d)
-            #mask_2d = np.rot90(mask_2d, k=1)
+            if original_image_path is None:
+                raise ValueError("original_image_path is required for DICOM mask export.")
 
         
         # Identify which dimension contains slices (usually smallest)
@@ -262,12 +320,6 @@ class MaskManager:
                 mask_2d = cv2.resize(mask_2d, expected_slice_shape[::-1], interpolation=cv2.INTER_NEAREST)
         
         # Create 3D volume by replicating mask across all slices
-        mask_3d = np.zeros(original_shape, dtype=np.uint8)
-        
-        #if img_type == "DICOM":
-        #    mask_3d = mask_2d[np.newaxis, :, :].astype(np.uint8)
-        #else:
-            # Keep existing behavior for NIfTI / volumetric data
         slice_dim = int(np.argmin(original_shape))
         mask_3d = np.zeros(original_shape, dtype=np.uint8)
 
@@ -280,20 +332,165 @@ class MaskManager:
         else:
             for i in range(original_shape[2]):
                 mask_3d[:, :, i] = mask_2d
-        
-        # Save with original affine - this preserves spatial registration
+
+        if img_type == "DICOM":
+            return MaskManager._save_dicom_mask(
+                mask_3d=mask_3d,
+                source_path=original_image_path,
+                output_dir=file_path,
+                base_name="dense",
+            )
+
+        # Save NIfTI with original affine - this preserves spatial registration
         mask_nii = nib.Nifti1Image(mask_3d, affine)
         full_path = os.path.join(file_path, file_name)
         nib.save(mask_nii, full_path)
-        
+
         print(f"Mask saved to {full_path}")
         print(f"  Shape: {mask_3d.shape} (matches original: {original_shape})")
         print(f"  Slice dimension: {slice_dim}")
-        
+
         return full_path
+
+    @staticmethod
+    def _update_dicom_for_mask(ds, mask_slice, series_uid, instance_number, series_desc):
+        if getattr(ds, "file_meta", None) is None:
+            ds.file_meta = FileMetaDataset()
+        ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+        ds.is_little_endian = True
+        ds.is_implicit_VR = False
+        ds.SeriesInstanceUID = series_uid
+        ds.SOPInstanceUID = generate_uid()
+        if getattr(ds, "file_meta", None) is None:
+            ds.file_meta = FileMetaDataset()
+        ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+        ds.file_meta.MediaStorageSOPInstanceUID = ds.SOPInstanceUID
+        ds.is_little_endian = True
+        ds.is_implicit_VR = False
+        ds.InstanceNumber = int(instance_number)
+        ds.ImageType = ["DERIVED", "PRIMARY", "MASK"]
+        ds.Modality = "OT"
+        ds.SeriesDescription = series_desc
+        ds.Rows, ds.Columns = mask_slice.shape
+        ds.SamplesPerPixel = 1
+        ds.PhotometricInterpretation = "MONOCHROME2"
+        ds.BitsAllocated = 8
+        ds.BitsStored = 8
+        ds.HighBit = 7
+        ds.PixelRepresentation = 0
+        if hasattr(ds, "NumberOfFrames"):
+            del ds.NumberOfFrames
+        if hasattr(ds, "RescaleIntercept"):
+            ds.RescaleIntercept = 0
+        if hasattr(ds, "RescaleSlope"):
+            ds.RescaleSlope = 1
+        ds.PixelData = mask_slice.astype(np.uint8).tobytes()
+        return ds
+
+    @staticmethod
+    def _save_dicom_mask(mask_3d, source_path, output_dir, base_name):
+        os.makedirs(output_dir, exist_ok=True)
+        mask_3d = (mask_3d > 0).astype(np.uint8)
+        series_desc = f"{base_name} mask"
+
+        if os.path.isdir(source_path):
+            out_dir = os.path.join(output_dir, f"{base_name}_dcm")
+            os.makedirs(out_dir, exist_ok=True)
+
+            from ImageLoader import DicomLoader
+
+            dicom_files = DicomLoader._list_dicom_files(source_path)
+            meta_list = [(fp, DicomLoader._read_meta(fp)) for fp in dicom_files]
+            meta_list = DicomLoader._sort_series(meta_list)
+
+            num_slices = len(meta_list)
+            if mask_3d.shape[0] != num_slices:
+                if mask_3d.shape[-1] == num_slices:
+                    mask_3d = np.moveaxis(mask_3d, -1, 0)
+                elif mask_3d.shape[1] == num_slices:
+                    mask_3d = np.moveaxis(mask_3d, 1, 0)
+                else:
+                    raise ValueError(
+                        f"Mask slices ({mask_3d.shape[0]}) do not match DICOM slices ({num_slices})."
+                    )
+
+            series_uid = generate_uid()
+            for idx, (fp, _) in enumerate(meta_list):
+                ds = pydicom.dcmread(fp)
+                mask_slice = mask_3d[idx]
+                if (ds.Rows, ds.Columns) != mask_slice.shape:
+                    mask_slice = cv2.resize(
+                        mask_slice, (int(ds.Columns), int(ds.Rows)), interpolation=cv2.INTER_NEAREST
+                    )
+                ds = MaskManager._update_dicom_for_mask(
+                    ds, mask_slice, series_uid, idx + 1, series_desc
+                )
+                out_path = os.path.join(out_dir, f"IM_{idx + 1:04d}.dcm")
+                ds.save_as(out_path, write_like_original=False)
+
+            print(f"DICOM mask series saved to {out_dir}")
+            return out_dir
+
+        ds = pydicom.dcmread(source_path)
+        arr = ds.pixel_array
+        series_uid = generate_uid()
+        out_path = os.path.join(output_dir, f"{base_name}.dcm")
+
+        if arr.ndim == 2:
+            mask_slice = mask_3d[0]
+            if (ds.Rows, ds.Columns) != mask_slice.shape:
+                mask_slice = cv2.resize(
+                    mask_slice, (int(ds.Columns), int(ds.Rows)), interpolation=cv2.INTER_NEAREST
+                )
+            ds = MaskManager._update_dicom_for_mask(
+                ds, mask_slice, series_uid, 1, series_desc
+            )
+            ds.save_as(out_path, write_like_original=False)
+            print(f"DICOM mask saved to {out_path}")
+            return out_path
+
+        # Multi-frame single file
+        mask_vol = mask_3d
+        if mask_vol.ndim == 2:
+            mask_vol = mask_vol[np.newaxis, ...]
+        if mask_vol.shape[1] != ds.Rows or mask_vol.shape[2] != ds.Columns:
+            resized = []
+            for frame in mask_vol:
+                resized.append(
+                    cv2.resize(frame, (int(ds.Columns), int(ds.Rows)), interpolation=cv2.INTER_NEAREST)
+                )
+            mask_vol = np.stack(resized, axis=0)
+
+        ds.SeriesInstanceUID = series_uid
+        ds.SOPInstanceUID = generate_uid()
+        if getattr(ds, "file_meta", None) is None:
+            ds.file_meta = FileMetaDataset()
+        ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+        ds.file_meta.MediaStorageSOPInstanceUID = ds.SOPInstanceUID
+        ds.is_little_endian = True
+        ds.is_implicit_VR = False
+        ds.ImageType = ["DERIVED", "PRIMARY", "MASK"]
+        ds.Modality = "OT"
+        ds.SeriesDescription = series_desc
+        ds.Rows, ds.Columns = mask_vol.shape[1], mask_vol.shape[2]
+        ds.NumberOfFrames = mask_vol.shape[0]
+        ds.SamplesPerPixel = 1
+        ds.PhotometricInterpretation = "MONOCHROME2"
+        ds.BitsAllocated = 8
+        ds.BitsStored = 8
+        ds.HighBit = 7
+        ds.PixelRepresentation = 0
+        if hasattr(ds, "RescaleIntercept"):
+            ds.RescaleIntercept = 0
+        if hasattr(ds, "RescaleSlope"):
+            ds.RescaleSlope = 1
+        ds.PixelData = mask_vol.astype(np.uint8).tobytes()
+        ds.save_as(out_path, write_like_original=False)
+        print(f"DICOM multi-frame mask saved to {out_path}")
+        return out_path
     
     @staticmethod 
-    def create_final_mask(folder_path, original_shape, original_affine):
+    def create_final_mask(folder_path, original_shape, original_affine, img_type="nii", original_image_path=None):
         """
         Creates a 3D NIfTI mask from processed slice arrays.
         
@@ -375,11 +572,22 @@ class MaskManager:
                 f"Final volume shape {volume.shape} doesn't match original {original_shape}"
             )
         
-        # Save NIfTI with original affine
-        mask_nii = nib.Nifti1Image(volume, original_affine)
-        nib.save(mask_nii, mask_path)
-        
-        print(f"Final mask saved to {mask_path}")
+        if img_type == "DICOM":
+            if original_image_path is None:
+                raise ValueError("original_image_path is required for DICOM mask export.")
+            out_dir = os.path.dirname(folder_path)
+            mask_path = MaskManager._save_dicom_mask(
+                mask_3d=volume,
+                source_path=original_image_path,
+                output_dir=out_dir,
+                base_name="mask",
+            )
+            print(f"Final DICOM mask saved to {mask_path}")
+        else:
+            # Save NIfTI with original affine
+            mask_nii = nib.Nifti1Image(volume, original_affine)
+            nib.save(mask_nii, mask_path)
+            print(f"Final mask saved to {mask_path}")
         
         # Clean up temporary .npy files
         print(f"Cleaning up {len(npy_files)} temporary .npy files...")
