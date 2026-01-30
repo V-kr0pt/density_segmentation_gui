@@ -156,9 +156,9 @@ def batch_threshold_step():
         return
 
     try:
-        img, _, _, _ = UnifiedImageLoader.load_slice(original_image_path)
+        img, _, _, _, _ = UnifiedImageLoader.load_slice(original_image_path)
         img_show = np.rot90(ImageProcessor.normalize_image(img)) # to show on GUI
-        msk, _, _, _ = UnifiedImageLoader.load_slice(mask_path)
+        msk, _, _, _, _ = UnifiedImageLoader.load_slice(mask_path)
         msk_show = np.rot90(msk)
     except Exception as e:
         st.error(f"Error loading images: {str(e)}")
