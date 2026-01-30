@@ -293,8 +293,8 @@ class MaskManager:
         
         os.makedirs(file_path, exist_ok=True)
 
-        # Ensure binary values (0/1) for saved mask
-        mask_2d = (mask_2d > 0).astype(np.uint8)
+        # Ensure binary values (0/255) for saved mask (better overlay visibility)
+        mask_2d = (mask_2d > 0).astype(np.uint8) * 255
 
         if img_type == "DICOM":
             print("Detected DICOM image!")
@@ -390,7 +390,7 @@ class MaskManager:
     @staticmethod
     def _save_dicom_mask(mask_3d, source_path, output_dir, base_name):
         os.makedirs(output_dir, exist_ok=True)
-        mask_3d = (mask_3d > 0).astype(np.uint8)
+        mask_3d = (mask_3d > 0).astype(np.uint8) * 255
         series_desc = f"{base_name} mask"
 
         if os.path.isdir(source_path):
@@ -524,7 +524,7 @@ class MaskManager:
         for f in npy_files:
             array = np.load(os.path.join(folder_path, f))
             # Convert to binary (0 or 1)
-            binary_slice = (array > 0).astype(np.uint8)
+            binary_slice = (array > 0).astype(np.uint8) * 255
             slices.append(binary_slice)
         
         print(f"Original shape: {original_shape}")
