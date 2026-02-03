@@ -1,19 +1,18 @@
-
 # =========================
 # Imports
 # =========================
 import os
 import streamlit as st
 from PIL import Image
-from new_utils import ImageProcessor, MaskManager
+from new_utils import ImageProcessor, MaskManager, DisplayTransform
 from ImageLoader import UnifiedImageLoader
 from streamlit_drawable_canvas import st_canvas
 import numpy as np
 
 def batch_draw_step():
     """
-    Main function for Step 2: Draw Masks in batch mode.
-    Handles navigation, drawing, mask creation, and saving for each file in the batch.
+    Step 2: Draw Masks in batch mode.
+    Uses DisplayTransform to properly handle coordinate transformations.
     """
 
     # =========================
@@ -38,8 +37,8 @@ def batch_draw_step():
     # =========================
     batch_files = st.session_state["batch_files"]
     current_index = st.session_state.get("batch_current_index", 0)
-    all_completed_draw = st.session_state["batch_completed_files"]["draw"]  # All files with a polygon
-    completed_draw = [f for f in all_completed_draw if f in st.session_state["batch_files_without_extension"]]  # Only batch files with a polygon
+    all_completed_draw = st.session_state["batch_completed_files"]["draw"]
+    completed_draw = [f for f in all_completed_draw if f in st.session_state["batch_files_without_extension"]]
 
     # =========================
     # Progress Bar
@@ -78,17 +77,20 @@ def batch_draw_step():
     # =========================
     st.markdown(f"""
     <div class="current-file">
-        <h4>📁 {current_file} ({current_index + 1}/{total_files})</h4>
+        <h4>📄 {current_file} ({current_index + 1}/{total_files})</h4>
         <p>💡 Navigate between unsaved files • Saved files are locked</p>
     </div>
     """, unsafe_allow_html=True)
+    
     # --- Navigation Buttons ---
     col1, col2, col3 = st.columns([1, 2, 1])
     with col1:
         if current_index > 0 and st.button("← Previous", help="Navigate to previous unsaved file"):
             st.session_state["batch_current_index"] = current_index - 1
             # Clear current file session state
-            keys_to_clear = ["points", "mask", "result", "create_mask", "affine", "original_image_path", "nb_of_slices", "scale", "output_path"]
+            keys_to_clear = ["display_transform", "mask", "result", "create_mask", 
+                           "affine", "original_image_path", "slice_index", "output_path",
+                           "original_shape", "native_polygons"]
             for key in keys_to_clear:
                 if key in st.session_state:
                     del st.session_state[key]
@@ -99,7 +101,9 @@ def batch_draw_step():
         if next_file_index < len(batch_files) and st.button("Next →", help="Navigate to next unsaved file"):
             st.session_state["batch_current_index"] = next_file_index
             # Clear current file session state
-            keys_to_clear = ["points", "mask", "result", "create_mask", "affine", "original_image_path", "nb_of_slices", "scale", "output_path"]
+            keys_to_clear = ["display_transform", "mask", "result", "create_mask",
+                           "affine", "original_image_path", "slice_index", "output_path",
+                           "original_shape", "native_polygons"]
             for key in keys_to_clear:
                 if key in st.session_state:
                     del st.session_state[key]
@@ -119,7 +123,6 @@ def batch_draw_step():
     # =========================
     # File Loading & Preparation
     # =========================
-    # Use the selected main input folder from session_state
     input_folder = st.session_state.get("main_input_folder", os.path.join(os.getcwd(), "media"))
     file_path = os.path.join(input_folder, current_file)
 
@@ -130,52 +133,40 @@ def batch_draw_step():
         st.error(f"File not found: {file_path}")
         return
 
-    # Load image and metadata
-    #image, affine, nb_of_slices = ImageOperations.load_image(file_path)
-    volume, affine, original_shape = UnifiedImageLoader.load_image(file_path)
-    internal_volume_shape = volume.shape 
-    nb_of_slices= internal_volume_shape[0]
-    image = volume[internal_volume_shape[0]//2, :, :] # loading the central slice as image
-    print(f"original shape:{original_shape}")
-    print(f"internal_volume_shape:{internal_volume_shape}")
-    print(f"image shape: {image.shape}")
-    del volume # removing volume to not consume RAM
+    # Load image in NATIVE orientation
+    image_slice, affine, original_shape, slice_index, img_type = UnifiedImageLoader.load_slice(file_path)
+    
+    print(f"=== File: {current_file} type: {img_type} ===")
+    print(f"Original shape: {original_shape}")
+    print(f"Loaded slice shape: {image_slice.shape}")
+    print(f"Slice index: {slice_index}")
+    print(f"Slice dimension: {np.argmin(original_shape)}")
 
     # Initialize session state for new file
-    if "affine" not in st.session_state or st.session_state.get("current_batch_file") != current_file:
+    if "original_image_path" not in st.session_state or st.session_state.get("current_batch_file") != current_file:
         st.session_state["affine"] = affine
         st.session_state["original_image_path"] = file_path
-        st.session_state["nb_of_slices"] = nb_of_slices
+        st.session_state["original_shape"] = original_shape
+        st.session_state["slice_index"] = slice_index
         st.session_state["current_batch_file"] = current_file
-        st.session_state["points"] = []  # Reset points for new file
-        st.session_state["polygons"] = []
+        st.session_state["img_type"] = img_type
+        st.session_state["native_polygons"] = []
         # Clear other file-specific data
-        for key in ["mask", "result", "create_mask"]:
+        for key in ["mask", "result", "create_mask", "display_transform"]:
             if key in st.session_state:
                 del st.session_state[key]
 
     # =========================
-    # Image Scaling & Canvas Setup
+    # Display Transformation Setup
     # =========================
-    max_width, max_height = 1200, 800
-    orig_height, orig_width = image.shape[0], image.shape[1]
-    scale = min(max_width / orig_width, max_height / orig_height, 1)
-    if "scale" not in st.session_state:
-        st.session_state["scale"] = scale
-
-    # Pad image to avoid edge issues 
-    padding = 50
-    padded_image = np.pad(image,
-                           pad_width=((padding, padding), (padding, padding)),
-                            mode="constant", constant_values=0)
-    padded_image = ImageProcessor.normalize_image(padded_image) 
+    if "display_transform" not in st.session_state:
+        st.session_state["display_transform"] = DisplayTransform(padding=50)
     
-    pil_height = int(padded_image.shape[0] * scale)
-    pil_width = int(padded_image.shape[1] * scale)    
-    pil_image = Image.fromarray(padded_image).resize((pil_width, pil_height)).rotate(90, expand=True)
+    transform = st.session_state["display_transform"]
     
-    if "points" not in st.session_state:
-        st.session_state.points = []
+    # Prepare image for display
+    pil_image = transform.prepare_for_display(image_slice, img_type=img_type, max_width=1200, max_height=800)
+    rotated_width, rotated_height = pil_image.size
 
     # --- Drawing Canvas ---
     st.markdown("### 🖌️ Drawing Canvas")
@@ -208,9 +199,6 @@ def batch_draw_step():
     </small>
     """, unsafe_allow_html=True)
 
-
-    
-    rotated_width, rotated_height = pil_image.size
     canvas_result = st_canvas(
         fill_color="rgba(255, 0, 0, 0.3)",
         stroke_width=2,
@@ -240,53 +228,51 @@ def batch_draw_step():
     # =========================
     if canvas_result.json_data is not None:
         objects = canvas_result.json_data["objects"]
-        polygons = []
         
         # If canvas was cleared (no objects), clear all related state
         if len(objects) == 0:
-            st.session_state.polygons = []
+            st.session_state["native_polygons"] = []
             # Clear mask-related state if it exists
             for key in ["mask", "result", "create_mask"]:
                 if key in st.session_state:
                     del st.session_state[key]
-        else:
-            # Process polygons from canvas
+        else:         
+            # Extract polygons from canvas and convert to native coordinates
+            native_polygons = []
+
             for obj in objects:
-                if obj["type"] == "path":  # ensure it's a polygon
+                if obj["type"] == "path":
                     poly = obj["path"]
-                    points_rotated = [(int(p[1]), int(p[2])) for p in poly if len(p) == 3]
-                    points = []
-                    for x, y in points_rotated:
-                        # removing rotation
-                        px, py = rotated_height - y, x
+                    # Extract canvas coordinates
+                    canvas_points = [(int(p[1]), int(p[2])) for p in poly if len(p) == 3]  # (x, y)
 
-                        # padding removing
-                        px -= int(padding*scale)
-                        py -= int(padding*scale)
-
-                        # scaling back to original image size
-                        px = min(max(px, 0), image.shape[0] - 1)
-                        py = min(max(py, 0), image.shape[1] - 1)
-
-                        points.append((px, py))
-                    polygons.append(points)
-
-            # Save all polygons to session state
-            st.session_state.polygons = polygons
+                    # Convert to native image coordinates using DisplayTransform
+                    native_points = transform.canvas_to_native_coords(canvas_points)
+                    
+                    if len(native_points) >= 3:
+                        native_polygons.append(native_points)
+        
+            # Save native polygons to session state
+            st.session_state["native_polygons"] = native_polygons
 
     # =========================
     # Mask Creation Logic
     # =========================
     if st.session_state.get("create_mask", False):
-        if "polygons" in st.session_state and len(st.session_state.polygons) > 0:
-            result, combined_mask = MaskManager.create_combined_mask(image, st.session_state.polygons, scale)
+        if "native_polygons" in st.session_state and len(st.session_state["native_polygons"]) > 0:
+            # Create mask in NATIVE orientation
+            result, combined_mask = MaskManager.create_combined_mask(
+                image_slice, 
+                st.session_state["native_polygons"]
+            )
+            
             st.session_state["mask"] = combined_mask
             st.session_state["result"] = result
             st.session_state["output_path"] = os.path.join(os.getcwd(), 'output', current_file_name)
             st.session_state["create_mask"] = False
             st.rerun()
         else:
-            st.warning("Select at least 3 points to create a polygon.")
+            st.warning("Please draw at least one polygon with 3 or more points.")
             st.session_state["create_mask"] = False
 
     # =========================
@@ -296,8 +282,9 @@ def batch_draw_step():
         st.markdown("### 👁️ Mask Preview")
         col1, col2 = st.columns(2)
 
-        present_img = ImageProcessor.normalize_image(np.rot90(image))
-        present_result = ImageProcessor.normalize_image(np.rot90(st.session_state["result"]))
+        # Build display versions using the same transform logic
+        present_img = transform.prepare_for_display(image_slice, img_type=st.session_state["img_type"])
+        present_result = transform.prepare_for_display(st.session_state["result"], img_type=st.session_state["img_type"])
 
         with col1:
             st.image(present_img, caption="Original Image", use_container_width=True)
@@ -307,24 +294,29 @@ def batch_draw_step():
         col1, col2, col3 = st.columns([1, 1, 1])
         with col2:
             if st.button("💾 Save Mask & Continue", type="primary"):
-                # Save mask exactly as drawn, no rotation or transformation
+                # Save mask in NATIVE orientation with proper dimension handling
                 _ = MaskManager.save_mask(
-                        mask=st.session_state["mask"],
-                        original_shape=original_shape,
-                        nb_of_slices=st.session_state["nb_of_slices"],
-                        affine=st.session_state["affine"],
-                        file_path=st.session_state["output_path"],
-                        #points=st.session_state["points"], in old version we save a .json file with the points and scale info
-                        #scale=st.session_state["scale"]
-                    )
+                    mask_2d=st.session_state["mask"],
+                    original_shape=st.session_state["original_shape"],
+                    affine=st.session_state["affine"],
+                    img_type=st.session_state["img_type"],
+                    file_path=st.session_state["output_path"],
+                    original_image_path=st.session_state["original_image_path"],
+                )
+                
                 # Mark file as completed
                 st.session_state["batch_completed_files"]["draw"].append(current_file_name)
+                
                 # Move to next file
                 st.session_state["batch_current_index"] = current_index + 1
+                
                 # Clear current file session state
-                keys_to_clear = ["points", "mask", "result", "create_mask", "affine", "original_image_path", "nb_of_slices", "scale", "output_path", "current_batch_file"]
+                keys_to_clear = ["display_transform", "mask", "result", "create_mask",
+                               "affine", "original_image_path", "slice_index", "output_path",
+                               "original_shape", "current_batch_file", "native_polygons", "img_type"]
                 for key in keys_to_clear:
                     if key in st.session_state:
                         del st.session_state[key]
+                
                 st.success(f"Mask saved for {current_file}!")
                 st.rerun()
