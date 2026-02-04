@@ -1,3 +1,7 @@
+from env_check import run_all_checks
+
+run_all_checks()
+
 from file_selection_step import file_selection_step
 from batch_draw_step import batch_draw_step
 from batch_threshold_step import batch_threshold_step
