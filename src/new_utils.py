@@ -6,8 +6,95 @@ import os
 import cv2
 import matplotlib.pyplot as plt
 import pydicom
+import shutil
 from pydicom.uid import generate_uid, ExplicitVRLittleEndian
 from pydicom.dataset import FileMetaDataset
+
+
+OUTPUT_ARTIFACT_FILES = {
+    "dense.nii",
+    "dense.dcm",
+    "mask.dcm",
+    "threshold.json",
+}
+
+OUTPUT_ARTIFACT_DIRS = {
+    "dense_dcm",
+    "mask_dcm",
+    "dense_mask",
+}
+
+OUTPUT_ARTIFACT_NAMES = OUTPUT_ARTIFACT_FILES | OUTPUT_ARTIFACT_DIRS
+
+
+def is_output_artifact_name(name: str) -> bool:
+    return os.path.basename(name).lower() in OUTPUT_ARTIFACT_NAMES
+
+
+def folder_contains_output_artifacts(folder_path: str) -> bool:
+    try:
+        for entry in os.listdir(folder_path):
+            if is_output_artifact_name(entry):
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def list_output_artifacts(output_case_path: str) -> list:
+    """
+    Return a list of output artifact dicts present in a case folder.
+    Each item: {"name": <artifact name>, "path": <absolute path>, "kind": "file"|"dir"}
+    """
+    artifacts = []
+    for name in sorted(OUTPUT_ARTIFACT_FILES):
+        path = os.path.join(output_case_path, name)
+        if os.path.isfile(path):
+            artifacts.append({"name": name, "path": path, "kind": "file"})
+    for name in sorted(OUTPUT_ARTIFACT_DIRS):
+        path = os.path.join(output_case_path, name)
+        if os.path.isdir(path):
+            artifacts.append({"name": name, "path": path, "kind": "dir"})
+    return artifacts
+
+
+def delete_output_artifacts(output_case_path: str, names: list) -> dict:
+    """
+    Delete selected output artifacts by name from a case folder.
+    Returns dict with removed_files, removed_dirs, errors.
+    """
+    removed_files = []
+    removed_dirs = []
+    errors = []
+
+    if not os.path.isdir(output_case_path):
+        return {
+            "removed_files": removed_files,
+            "removed_dirs": removed_dirs,
+            "errors": [f"Output case folder not found: {output_case_path}"],
+        }
+
+    allowed = OUTPUT_ARTIFACT_NAMES
+    for name in names:
+        if name not in allowed:
+            errors.append(f"Unsupported artifact: {name}")
+            continue
+        path = os.path.join(output_case_path, name)
+        try:
+            if name in OUTPUT_ARTIFACT_FILES and os.path.isfile(path):
+                os.remove(path)
+                removed_files.append(path)
+            elif name in OUTPUT_ARTIFACT_DIRS and os.path.isdir(path):
+                shutil.rmtree(path)
+                removed_dirs.append(path)
+        except Exception as e:
+            errors.append(f"Failed to remove {path}: {e}")
+
+    return {
+        "removed_files": removed_files,
+        "removed_dirs": removed_dirs,
+        "errors": errors,
+    }
 
 
 def resolve_dense_mask_path(output_path, prefer_dicom=False):
