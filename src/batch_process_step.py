@@ -7,12 +7,30 @@ import threading
 import traceback
 import gc
 import numpy as np
+import logging
 import streamlit as st
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
 from ImageLoader import UnifiedImageLoader
-from new_utils import ThresholdOperator, MaskManager, DisplayTransform, resolve_dense_mask_path
+from new_utils import MaskManager, DisplayTransform, resolve_dense_mask_path
 from performance_config import performance_config, get_system_info
+
+# GPU acceleration with automatic CPU fallback
+try:
+    from gpu_accelerator import (
+        GPUThresholdOperator,
+        GPUBatchProcessor,
+        GPUMaskOperator,
+        gpu_config
+    )
+    GPU_AVAILABLE = gpu_config.cuda_available
+except ImportError:
+    from new_utils import ThresholdOperator as GPUThresholdOperator
+    from new_utils import MaskManager as GPUMaskOperator
+    GPU_AVAILABLE = False
+    GPUBatchProcessor = None
+
+logger = logging.getLogger(__name__)
 
 
 # =========================
@@ -20,7 +38,7 @@ from performance_config import performance_config, get_system_info
 # =========================
 class BatchProcessingManager:
     """
-    Manages multi-threaded batch file processing.
+    Manages multi-threaded batch file processing with GPU acceleration.
     """
     
     def __init__(self, max_workers=None):
@@ -31,6 +49,14 @@ class BatchProcessingManager:
         self.operations_count = 0
         self.performance_settings = performance_config.get_memory_settings()
         self.io_settings = performance_config.get_io_settings()
+        
+        # GPU configuration
+        self.use_gpu = GPU_AVAILABLE
+        if self.use_gpu and GPUBatchProcessor is not None:
+            self.gpu_processor = GPUBatchProcessor()
+            logger.info("GPU acceleration enabled for batch processing")
+        else:
+            self.gpu_processor = None
         
     def process_single_file(self, file_info):
         """
@@ -63,16 +89,22 @@ class BatchProcessingManager:
                 UnifiedImageLoader.load_slice(original_image_path)
             central_mask_slice, _, _, _, _ = UnifiedImageLoader.load_slice(mask_path, central_slice_idx)
             
-            # Calculate target area from central slice
-            thresholded_img = ThresholdOperator.threshold_slice(
-                central_image_slice, central_mask_slice, T
-            )
-            target_area = MaskManager.measure_mask_area(thresholded_img)
+            # Calculate target area from central slice (use GPU if available)
+            if self.use_gpu:
+                thresholded_img = GPUThresholdOperator.threshold_slice(
+                    central_image_slice, central_mask_slice, T
+                )
+                target_area = GPUMaskOperator.measure_mask_area(thresholded_img)
+            else:
+                from new_utils import ThresholdOperator
+                thresholded_img = ThresholdOperator.threshold_slice(
+                    central_image_slice, central_mask_slice, T
+                )
+                target_area = MaskManager.measure_mask_area(thresholded_img)
             
-            print(f"Processing {file_name}:")
-            print(f"  Original shape: {original_shape}")
-            print(f"  Central slice index: {central_slice_idx}")
-            print(f"  Target area: {target_area} pixels")
+            logger.debug(f"Processing {file_name}: shape={original_shape}, "
+                        f"slices={original_shape[np.argmin(original_shape)]}, "
+                        f"target_area={target_area}")
             
             # Clean output directory
             if os.path.exists(save_dir):
@@ -84,10 +116,7 @@ class BatchProcessingManager:
             slice_dim = np.argmin(original_shape)
             num_slices = original_shape[slice_dim]
             
-            print(f"  Slice dimension: {slice_dim}")
-            print(f"  Number of slices: {num_slices}")
-            
-            # Process all slices
+            # Process all slices with GPU acceleration if available
             slice_results = self._process_slices_optimized(
                 original_image_path, mask_path, save_dir,
                 target_area, num_slices, img_type
@@ -113,7 +142,7 @@ class BatchProcessingManager:
         except Exception as e:
             error_msg = f"Error processing {file}: {str(e)}\n{traceback.format_exc()}"
             with self.error_lock:
-                print(error_msg)
+                logger.error(error_msg)
             return {
                 'success': False,
                 'file_name': file_name,
@@ -124,9 +153,72 @@ class BatchProcessingManager:
     def _process_slices_optimized(self, original_image_path, mask_path, save_dir,
                                  target_area, num_slices, img_type):
         """
-        Process all slices with optimized chunking and memory management.
-        Slices are processed in NATIVE orientation and saved as-is.
+        Process all slices with GPU acceleration or CPU fallback.
+        Uses GPU batch processing for significant speedups when available.
         """
+        # Use GPU batch processing for larger datasets
+        if self.use_gpu and self.gpu_processor is not None and num_slices > 10:
+            return self._process_slices_gpu_batch(
+                original_image_path, mask_path, save_dir,
+                target_area, num_slices, img_type
+            )
+        else:
+            return self._process_slices_cpu(
+                original_image_path, mask_path, save_dir,
+                target_area, num_slices, img_type
+            )
+    
+    def _process_slices_gpu_batch(self, original_image_path, mask_path, save_dir,
+                                  target_area, num_slices, img_type):
+        """GPU-accelerated batch slice processing."""
+        # Load all slices
+        image_slices = []
+        mask_slices = []
+        
+        for slice_idx in range(num_slices):
+            img_slice, _, _, _, _ = UnifiedImageLoader.load_slice(
+                original_image_path, slice_idx
+            )
+            msk_slice, _, _, _, _ = UnifiedImageLoader.load_slice(
+                mask_path, slice_idx
+            )
+            image_slices.append(img_slice)
+            mask_slices.append(msk_slice)
+        
+        # Process all slices on GPU
+        results = self.gpu_processor.process_slices_batch(
+            image_slices, mask_slices, target_area
+        )
+        
+        # Save results
+        display_transform = DisplayTransform(padding=0)
+        display_transform.set_rotation_for_type(img_type)
+        compression_level = self.io_settings['compression_level']
+        
+        for slice_idx, (threshold, binary_image) in enumerate(results):
+            # Save numpy array
+            npy_filename = f'slice_{slice_idx:04d}_threshold_{threshold:.2f}.npy'
+            np.save(os.path.join(save_dir, npy_filename), binary_image)
+            
+            # Save PNG for visualization
+            png_filename = f'slice_{slice_idx:04d}_threshold_{threshold:.2f}.png'
+            if display_transform.rotate_k % 4 != 0:
+                binary_img_display = np.rot90(binary_image, k=display_transform.rotate_k)
+            else:
+                binary_img_display = binary_image
+            
+            img_pil = Image.fromarray(binary_img_display, mode='L')
+            img_pil.save(os.path.join(save_dir, png_filename), optimize=True, compress_level=compression_level)
+        
+        return len(results)
+    
+    def _process_slices_cpu(self, original_image_path, mask_path, save_dir,
+                           target_area, num_slices, img_type):
+        """
+        CPU fallback: Process slices with chunking and memory management.
+        """
+        from new_utils import ThresholdOperator
+        
         chunk_size = performance_config.get_chunk_size(num_slices)
         total_processed = 0
         
@@ -187,7 +279,7 @@ class BatchProcessingManager:
                     del image_slice, mask_slice, thresholded_image, binary_image
                     
                 except Exception as e:
-                    print(f"Error processing slice {slice_index}: {str(e)}")
+                    logger.warning(f"Error processing slice {slice_index}: {str(e)}")
                     continue
         
         return total_processed

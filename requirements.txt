@@ -1181,6 +1181,11 @@ urllib3==2.6.3 \
     --hash=sha256:1b62b6884944a57dbe321509ab94fd4d3b307075e0c2eae991ac71ee15ad38ed \
     --hash=sha256:bf272323e553dfb2e87d9bfd225ca7b0f467b919d7bbd355436d3fd37cb0acd4
     # via requests
+cupy-cuda12x==13.3.0 \
+    --hash=sha256:5e54c1e48b0e46967e7f80675c5e8c5bc415e39a9e3e9e04cf388e8e60935da5 \
+    --hash=sha256:ac957d33f59b47e45c85faa5aeafc1e134e6f03e736dd4e22da3c76523cb1038 \
+    --hash=sha256:c1a6dc235e0b1855f4f7f5b0efb4f0a9bfc4295a4c7e3de23be8a9c21a68bd83
+    # via gpu acceleration (optional, fallback to CPU if not installed)
 watchdog==5.0.3 ; sys_platform != 'darwin' \
     --hash=sha256:0f9332243355643d567697c3e3fa07330a1d1abf981611654a1f2bf2175612b7 \
     --hash=sha256:108f42a7f0345042a854d4d0ad0834b741d421330d5f575b81cb27b883500176 \
