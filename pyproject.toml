@@ -11,4 +11,5 @@ dependencies = [
     "pydicom>=3.0.1",
     "streamlit==1.40.0",
     "streamlit-drawable-canvas>=0.9.3",
+    "streamlit-plotly-events>=0.0.6",
 ]

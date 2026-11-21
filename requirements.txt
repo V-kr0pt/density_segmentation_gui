@@ -1194,3 +1194,7 @@ watchdog==5.0.3 ; sys_platform != 'darwin' \
     --hash=sha256:dd021efa85970bd4824acacbb922066159d0f9e546389a4743d56919b6758b91 \
     --hash=sha256:f00b4cf737f568be9665563347a910f8bdc76f88c2970121c86243c8cfdf90e9
     # via streamlit
+plotly==7.1.0 \
+    --hash=sha256:dbb7fa18afce40d0a8e80d1bf162eceb3faa0ce5a77fe741ad09a74cf78f53f3
+streamlit-plotly-events==0.0.6 \
+    --hash=sha256:e63fbe3c6a0746fdfce20060fc45ba5cd97805505c332b27372dcbd02c2ede29

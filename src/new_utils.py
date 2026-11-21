@@ -1,13 +1,72 @@
 import numpy as np
 import nibabel as nib
 import re
+import json
 from PIL import Image
 import os
 import cv2
 import matplotlib.pyplot as plt
 import pydicom
-from pydicom.uid import generate_uid, ExplicitVRLittleEndian
+from pydicom.uid import generate_uid, ExplicitVRLittleEndian, RLELossless
 from pydicom.dataset import FileMetaDataset
+
+
+def apply_orientation(arr, rotate_k: int = 0, flip_h: bool = False, flip_v: bool = False, slice_dim: int | None = None):
+    """
+    Apply user-defined orientation (np.rot90 + flips) to a 2-D or 3-D array.
+    For 3-D arrays the slice dimension is preserved; rotations and flips only
+    touch the in-slice (row,col) axes.
+    """
+    arr = np.asarray(arr)
+    rotate_k = int(rotate_k) % 4
+    if arr.ndim == 2:
+        if rotate_k != 0:
+            arr = np.rot90(arr, k=rotate_k)
+        if flip_h:
+            arr = np.fliplr(arr)
+        if flip_v:
+            arr = np.flipud(arr)
+        return np.ascontiguousarray(arr)
+    if arr.ndim == 3:
+        if slice_dim is None:
+            slice_dim = int(np.argmin(arr.shape))
+        other = [i for i in range(3) if i != slice_dim]
+        if rotate_k != 0:
+            arr = np.rot90(arr, k=rotate_k, axes=(other[0], other[1]))
+        if flip_h:
+            arr = np.flip(arr, axis=other[1])
+        if flip_v:
+            arr = np.flip(arr, axis=other[0])
+        return arr
+    raise ValueError(f"apply_orientation: unsupported ndim={arr.ndim}")
+
+
+def orient_shape_3d(shape, slice_dim: int, rotate_k: int) -> tuple:
+    """
+    Return the new 3-D shape after np.rot90(k=rotate_k) around slice_dim.
+    Flips don't change shape, so only rotation matters here.
+    """
+    rotate_k = int(rotate_k) % 4
+    shape = list(shape)
+    if rotate_k % 2 == 1:
+        other = [i for i in range(3) if i != slice_dim]
+        shape[other[0]], shape[other[1]] = shape[other[1]], shape[other[0]]
+    return tuple(shape)
+
+
+def sagittal_cw_rotate(volume: np.ndarray, affine: np.ndarray):
+    """
+    Rotate each 2-D slice 90° clockwise (axes 1 and 2 of a slices×rows×cols volume).
+
+    The affine is intentionally NOT updated. The DICOM source has an identity affine
+    (orientation tags missing). If we updated the affine correctly, an orientation-aware
+    NIfTI viewer would undo the visual rotation by re-mapping physical coordinates —
+    leaving the display unchanged. By keeping the original affine both original.nii.gz
+    and mask.nii.gz share the same coordinate frame, so they stay registered with each
+    other, and the viewer displays the rotated data directly without correction.
+    """
+    rotated = np.rot90(volume, k=3, axes=(1, 2))
+    return rotated, affine
 
 
 def resolve_dense_mask_path(output_path, prefer_dicom=False):
@@ -38,14 +97,17 @@ def resolve_final_mask_path(output_path, prefer_dicom=False):
     Resolve the saved final mask path for either NIfTI or DICOM outputs.
     Returns a file path or folder path, or None if not found.
     """
+    # mask.nii.gz is always checked first (preferred output format)
     if prefer_dicom:
         candidates = [
+            os.path.join(output_path, "dense_mask", "mask.nii.gz"),
+            os.path.join(output_path, "dense_mask", "mask.nii"),
             os.path.join(output_path, "mask_dcm"),
             os.path.join(output_path, "mask.dcm"),
-            os.path.join(output_path, "dense_mask", "mask.nii"),
         ]
     else:
         candidates = [
+            os.path.join(output_path, "dense_mask", "mask.nii.gz"),
             os.path.join(output_path, "dense_mask", "mask.nii"),
             os.path.join(output_path, "mask.dcm"),
             os.path.join(output_path, "mask_dcm"),
@@ -54,6 +116,150 @@ def resolve_final_mask_path(output_path, prefer_dicom=False):
         if os.path.isfile(path) or os.path.isdir(path):
             return path
     return None
+
+
+def _ensure_2d_mask(mask):
+    """Collapse a loaded mask to 2-D (squeeze, then pick central slice of any 3-D)."""
+    mask = np.asarray(mask)
+    if mask.ndim > 2:
+        mask = np.squeeze(mask)
+    if mask.ndim == 3:
+        slice_dim = int(np.argmin(mask.shape))
+        idx = mask.shape[slice_dim] // 2
+        if slice_dim == 0:
+            mask = mask[idx]
+        elif slice_dim == 1:
+            mask = mask[:, idx, :]
+        else:
+            mask = mask[:, :, idx]
+    return mask
+
+
+def save_polygon_mask_dcm(mask_2d, output_path, source_image_path=None):
+    """
+    Save the 2D polygon as a single-frame RLE-compressed DICOM at
+    output_path/dense.dcm.
+
+    Why this shape: a single 2D frame with RLE is typically tens of KB for
+    binary polygons (huge zero-runs), writes almost instantly, and stays
+    inspectable in any DICOM viewer. The old 3D-broadcast multi-frame
+    approach produced ~5 MB files and spent real time encoding; the brief
+    uncompressed .npy experiment was ~5 MB because raw binary masks don't
+    shrink without compression.
+
+    When source_image_path points at a DICOM (file or folder), patient /
+    study tags are copied so the mask stays associated with its source
+    series in viewers. For NIfTI sources minimal synthetic tags are used.
+
+    Side effect: removes any transitional dense_mask_2d.npy in the same
+    folder so there is only one source of truth going forward.
+    """
+    os.makedirs(output_path, exist_ok=True)
+    mask_2d = np.asarray(mask_2d)
+    if mask_2d.ndim > 2:
+        mask_2d = np.squeeze(mask_2d)
+    if mask_2d.ndim != 2:
+        raise ValueError(
+            f"save_polygon_mask_dcm expects a 2D mask, got shape {mask_2d.shape}"
+        )
+    mask_2d = np.ascontiguousarray((mask_2d > 0).astype(np.uint8) * 255)
+
+    rows, cols = mask_2d.shape
+
+    source_ds = None
+    if source_image_path is not None:
+        try:
+            if os.path.isdir(source_image_path):
+                from ImageLoader import DicomLoader
+                files = DicomLoader._list_dicom_files(source_image_path)
+                source_ds = pydicom.dcmread(files[0], stop_before_pixels=True)
+            elif source_image_path.lower().endswith((".dcm", ".dicom")):
+                source_ds = pydicom.dcmread(source_image_path, stop_before_pixels=True)
+        except Exception:
+            source_ds = None
+
+    ds = pydicom.Dataset()
+    if source_ds is not None:
+        for tag in ("PatientID", "PatientName", "PatientBirthDate",
+                    "StudyInstanceUID", "StudyDate", "StudyDescription",
+                    "AccessionNumber"):
+            if tag in source_ds:
+                setattr(ds, tag, getattr(source_ds, tag))
+
+    if "PatientID" not in ds:
+        ds.PatientID = "ANON"
+    if "StudyInstanceUID" not in ds:
+        ds.StudyInstanceUID = generate_uid()
+
+    ds.SOPClassUID = "1.2.840.10008.5.1.4.1.1.7"  # Secondary Capture Image
+    ds.SOPInstanceUID = generate_uid()
+    ds.SeriesInstanceUID = generate_uid()
+    ds.Modality = "OT"
+    ds.ImageType = ["DERIVED", "PRIMARY", "MASK"]
+    ds.SeriesDescription = "dense polygon mask (2D)"
+    ds.Rows = rows
+    ds.Columns = cols
+    ds.SamplesPerPixel = 1
+    ds.PhotometricInterpretation = "MONOCHROME2"
+    ds.BitsAllocated = 8
+    ds.BitsStored = 8
+    ds.HighBit = 7
+    ds.PixelRepresentation = 0
+    ds.PixelData = mask_2d.tobytes()
+
+    ds.file_meta = FileMetaDataset()
+    ds.file_meta.MediaStorageSOPClassUID = ds.SOPClassUID
+    ds.file_meta.MediaStorageSOPInstanceUID = ds.SOPInstanceUID
+    ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    ds.is_little_endian = True
+    ds.is_implicit_VR = False
+
+    try:
+        ds.compress(RLELossless)
+    except Exception as e:
+        print(f"Warning: RLE compression failed ({e}); saving uncompressed.")
+
+    out_path = os.path.join(output_path, "dense.dcm")
+    ds.save_as(out_path, write_like_original=False)
+
+    legacy_npy = os.path.join(output_path, "dense_mask_2d.npy")
+    if os.path.isfile(legacy_npy):
+        try:
+            os.remove(legacy_npy)
+        except Exception:
+            pass
+
+    return out_path
+
+
+def load_polygon_mask_2d(output_path):
+    """
+    Load the saved 2D polygon mask, or None if nothing is saved.
+    Handles, in order: the transitional .npy format, then any DICOM /
+    NIfTI form (new single-frame RLE dense.dcm or legacy 3D). For 3-D
+    sources the central slice is extracted — which is the polygon itself
+    since the draw step replicated it across every slice.
+    """
+    npy_path = os.path.join(output_path, "dense_mask_2d.npy")
+    if os.path.isfile(npy_path):
+        return np.load(npy_path)
+
+    mask_path = resolve_dense_mask_path(output_path)
+    if mask_path is None:
+        return None
+    try:
+        from ImageLoader import UnifiedImageLoader
+        mask_slice, _, _, _, _ = UnifiedImageLoader.load_slice(mask_path)
+        return _ensure_2d_mask(mask_slice)
+    except Exception:
+        return None
+
+
+def has_polygon_mask(output_path):
+    """Fast existence check for any saved polygon mask (new DCM, transitional .npy, or legacy 3-D)."""
+    if os.path.isfile(os.path.join(output_path, "dense_mask_2d.npy")):
+        return True
+    return resolve_dense_mask_path(output_path) is not None
 
 
 class ImageProcessor:
@@ -128,12 +334,24 @@ class DisplayTransform:
     def prepare_for_display(self, image, img_type: str, max_width=1200, max_height=800):
         """
         Prepare image for canvas display:
-          1) pad
-          2) normalize
-          3) rotate (DISPLAY ONLY)
-          4) scale to fit
+          1) squeeze to 2D if a 3D array arrives (some DICOMs lack NumberOfFrames
+             but pixel_array still returns (frames, rows, cols))
+          2) pad
+          3) normalize
+          4) rotate (DISPLAY ONLY)
+          5) scale to fit
         """
-        
+
+        # Guard: ensure we always work with a 2D slice
+        if image.ndim == 3:
+            slice_dim = int(np.argmin(image.shape))
+            idx = image.shape[slice_dim] // 2
+            if slice_dim == 0:
+                image = image[idx]
+            elif slice_dim == 1:
+                image = image[:, idx, :]
+            else:
+                image = image[:, :, idx]
 
         self.original_shape = image.shape
 
@@ -220,7 +438,27 @@ class MaskManager:
         if len(points) < 3:
             raise ValueError("At least 3 points are required to create a polygon mask.")
 
-        mask = np.zeros_like(image, dtype=np.uint8)
+        # Some loaders return a 3-D slice (e.g. 4-D NIfTI or odd DICOM layouts).
+        # Mirror what DisplayTransform.prepare_for_display does: drop size-1
+        # dims, and if still 3-D pick the middle index along the smallest axis.
+        image = np.asarray(image)
+        if image.ndim > 2:
+            image = np.squeeze(image)
+        if image.ndim == 3:
+            slice_dim = int(np.argmin(image.shape))
+            idx = image.shape[slice_dim] // 2
+            if slice_dim == 0:
+                image = image[idx]
+            elif slice_dim == 1:
+                image = image[:, idx, :]
+            else:
+                image = image[:, :, idx]
+        if image.ndim != 2:
+            raise ValueError(
+                f"create_mask expects a 2D image, got shape {image.shape}"
+            )
+
+        mask = np.zeros(image.shape, dtype=np.uint8)
 
         # OpenCV expects (x, y) = (col, row)
         pts_xy = np.array([[(c, r) for (r, c) in points]], dtype=np.int32)
@@ -236,23 +474,37 @@ class MaskManager:
         """
         Creates a combined binary mask from multiple polygons.
         All polygons should be in NATIVE image coordinates.
-        
+
         Args:
             image (numpy.ndarray): Input image (2D)
             polygons (list of lists): List of polygons, each as [(row, col), ...]
-        
+
         Returns:
             tuple: (masked_image, combined_mask)
         """
-        combined_mask = np.zeros_like(image, dtype=np.uint8)
-        
+        # Normalize to 2-D up front so combined_mask can't become 3-D via
+        # broadcast when image comes in 3-D (4-D NIfTI, odd DICOMs, …).
+        image = np.asarray(image)
+        if image.ndim > 2:
+            image = np.squeeze(image)
+        if image.ndim == 3:
+            slice_dim = int(np.argmin(image.shape))
+            idx = image.shape[slice_dim] // 2
+            if slice_dim == 0:
+                image = image[idx]
+            elif slice_dim == 1:
+                image = image[:, idx, :]
+            else:
+                image = image[:, :, idx]
+
+        combined_mask = np.zeros(image.shape, dtype=np.uint8)
+
         for poly in polygons:
             if len(poly) >= 3:
                 _, mask = MaskManager.create_mask(image, poly)
                 combined_mask = np.maximum(combined_mask, mask)  # Union
-        
+
         result = image * (combined_mask > 0)
-        #result = cv2.bitwise_and(image, image, mask=combined_mask)
         return result, combined_mask
     
     @staticmethod
@@ -290,48 +542,67 @@ class MaskManager:
         """
         if len(original_shape) != 3:
             raise ValueError(f"original_shape must be 3D, got {len(original_shape)}D")
-        
+
         os.makedirs(file_path, exist_ok=True)
 
+        # Force 2-D and a clean layout before any shape checks. Some upstream
+        # paths can produce a (1,H,W) or non-contiguous mask and cv2.resize
+        # fails silently in those cases.
+        mask_2d = np.asarray(mask_2d)
+        if mask_2d.ndim > 2:
+            mask_2d = np.squeeze(mask_2d)
+        if mask_2d.ndim != 2:
+            raise ValueError(
+                f"save_mask expects a 2D mask, got shape {mask_2d.shape}"
+            )
+
         # Ensure binary values (0/255) for saved mask (better overlay visibility)
-        mask_2d = (mask_2d > 0).astype(np.uint8) * 255
+        mask_2d = np.ascontiguousarray((mask_2d > 0).astype(np.uint8) * 255)
 
         if img_type == "DICOM":
             print("Detected DICOM image!")
             if original_image_path is None:
                 raise ValueError("original_image_path is required for DICOM mask export.")
 
-        
         # Identify which dimension contains slices (usually smallest)
-        slice_dim = np.argmin(original_shape)
-        
+        slice_dim = int(np.argmin(original_shape))
+
         # Build the expected 2D shape for a slice
         other_dims = [i for i in range(3) if i != slice_dim]
         expected_slice_shape = (original_shape[other_dims[0]], original_shape[other_dims[1]])
-        
-        # Verify mask dimensions match expected slice dimensions
-        # If they don't match, try transpose
+
+        # Verify mask dimensions match expected slice dimensions.
+        # Resize via PIL because cv2.resize can fail on very large arrays,
+        # non-contiguous views, or dtype mismatches. PIL's NEAREST resampling
+        # preserves binary values.
         if mask_2d.shape != expected_slice_shape:
             if mask_2d.shape == expected_slice_shape[::-1]:
-                mask_2d = mask_2d.T
+                mask_2d = np.ascontiguousarray(mask_2d.T)
             else:
-                # Last resort: resize (should generally not happen with proper coordinate transform)
-                print(f"WARNING: Mask shape {mask_2d.shape} doesn't match expected {expected_slice_shape}")
-                mask_2d = cv2.resize(mask_2d, expected_slice_shape[::-1], interpolation=cv2.INTER_NEAREST)
+                print(
+                    f"WARNING: Mask shape {mask_2d.shape} doesn't match expected "
+                    f"{expected_slice_shape} (original_shape={original_shape}, "
+                    f"slice_dim={slice_dim}). Resampling with PIL NEAREST."
+                )
+                # PIL size order is (width, height) = (cols, rows)
+                target_pil_size = (expected_slice_shape[1], expected_slice_shape[0])
+                mask_2d = np.array(
+                    Image.fromarray(mask_2d).resize(target_pil_size, Image.NEAREST),
+                    dtype=np.uint8,
+                )
         
-        # Create 3D volume by replicating mask across all slices
+        # Replicate the 2D mask across the slice dimension in one C-level
+        # copy via np.broadcast_to — much faster than a Python per-slice loop.
         slice_dim = int(np.argmin(original_shape))
-        mask_3d = np.zeros(original_shape, dtype=np.uint8)
 
         if slice_dim == 0:
-            for i in range(original_shape[0]):
-                mask_3d[i, :, :] = mask_2d
+            mask_view = np.broadcast_to(mask_2d[np.newaxis, :, :], original_shape)
         elif slice_dim == 1:
-            for i in range(original_shape[1]):
-                mask_3d[:, i, :] = mask_2d
+            mask_view = np.broadcast_to(mask_2d[:, np.newaxis, :], original_shape)
         else:
-            for i in range(original_shape[2]):
-                mask_3d[:, :, i] = mask_2d
+            mask_view = np.broadcast_to(mask_2d[:, :, np.newaxis], original_shape)
+
+        mask_3d = np.ascontiguousarray(mask_view, dtype=np.uint8)
 
         if img_type == "DICOM":
             return MaskManager._save_dicom_mask(
@@ -351,6 +622,20 @@ class MaskManager:
         print(f"  Slice dimension: {slice_dim}")
 
         return full_path
+
+    @staticmethod
+    def _compress_and_save(ds, out_path):
+        """
+        Save a DICOM dataset with RLE Lossless compression when possible.
+        Binary masks are mostly long runs of zeros, so RLE typically shrinks
+        the file ~50-100× with near-instant decode. Falls back to uncompressed
+        if the encoder raises (older pydicom, unusual pixel layouts, etc.).
+        """
+        try:
+            ds.compress(RLELossless)
+        except Exception as e:
+            print(f"Warning: RLE compression failed ({e}); saving uncompressed.")
+        ds.save_as(out_path, write_like_original=False)
 
     @staticmethod
     def _update_dicom_for_mask(ds, mask_slice, series_uid, instance_number, series_desc):
@@ -394,9 +679,6 @@ class MaskManager:
         series_desc = f"{base_name} mask"
 
         if os.path.isdir(source_path):
-            out_dir = os.path.join(output_dir, f"{base_name}_dcm")
-            os.makedirs(out_dir, exist_ok=True)
-
             from ImageLoader import DicomLoader
 
             dicom_files = DicomLoader._list_dicom_files(source_path)
@@ -404,6 +686,21 @@ class MaskManager:
             meta_list = DicomLoader._sort_series(meta_list)
 
             num_slices = len(meta_list)
+
+            # ---- Single-file multi-frame (e.g. DBT / tomosynthesis) ----
+            # Check BEFORE creating out_dir so we don't leave an empty dense_dcm/
+            # folder behind — resolve_dense_mask_path would find it and crash.
+            if num_slices == 1 and int(getattr(meta_list[0][1], "NumberOfFrames", 1)) > 1:
+                return MaskManager._save_dicom_mask(
+                    mask_3d=mask_3d,
+                    source_path=meta_list[0][0],
+                    output_dir=output_dir,
+                    base_name=base_name,
+                )
+
+            out_dir = os.path.join(output_dir, f"{base_name}_dcm")
+            os.makedirs(out_dir, exist_ok=True)
+
             if mask_3d.shape[0] != num_slices:
                 if mask_3d.shape[-1] == num_slices:
                     mask_3d = np.moveaxis(mask_3d, -1, 0)
@@ -426,7 +723,7 @@ class MaskManager:
                     ds, mask_slice, series_uid, idx + 1, series_desc
                 )
                 out_path = os.path.join(out_dir, f"IM_{idx + 1:04d}.dcm")
-                ds.save_as(out_path, write_like_original=False)
+                MaskManager._compress_and_save(ds, out_path)
 
             print(f"DICOM mask series saved to {out_dir}")
             return out_dir
@@ -445,7 +742,7 @@ class MaskManager:
             ds = MaskManager._update_dicom_for_mask(
                 ds, mask_slice, series_uid, 1, series_desc
             )
-            ds.save_as(out_path, write_like_original=False)
+            MaskManager._compress_and_save(ds, out_path)
             print(f"DICOM mask saved to {out_path}")
             return out_path
 
@@ -485,7 +782,7 @@ class MaskManager:
         if hasattr(ds, "RescaleSlope"):
             ds.RescaleSlope = 1
         ds.PixelData = mask_vol.astype(np.uint8).tobytes()
-        ds.save_as(out_path, write_like_original=False)
+        MaskManager._compress_and_save(ds, out_path)
         print(f"DICOM multi-frame mask saved to {out_path}")
         return out_path
     
@@ -572,22 +869,15 @@ class MaskManager:
                 f"Final volume shape {volume.shape} doesn't match original {original_shape}"
             )
         
-        if img_type == "DICOM":
-            if original_image_path is None:
-                raise ValueError("original_image_path is required for DICOM mask export.")
-            out_dir = os.path.dirname(folder_path)
-            mask_path = MaskManager._save_dicom_mask(
-                mask_3d=volume,
-                source_path=original_image_path,
-                output_dir=out_dir,
-                base_name="mask",
-            )
-            print(f"Final DICOM mask saved to {mask_path}")
-        else:
-            # Save NIfTI with original affine
-            mask_nii = nib.Nifti1Image(volume, original_affine)
-            nib.save(mask_nii, mask_path)
-            print(f"Final mask saved to {mask_path}")
+        # Rotate 90° CW in the sagittal plane so the output matches
+        # the rotated original.nii.gz saved in batch_process_step.
+        volume_out, affine_out = sagittal_cw_rotate(volume, original_affine)
+
+        # Always save as .nii.gz for NIfTI viewer overlay compatibility
+        mask_path = os.path.join(folder_path, 'mask.nii.gz')
+        mask_nii = nib.Nifti1Image(volume_out.astype(np.uint8), affine_out)
+        nib.save(mask_nii, mask_path)
+        print(f"Final mask saved to {mask_path}")
         
         # Clean up temporary .npy files
         print(f"Cleaning up {len(npy_files)} temporary .npy files...")
