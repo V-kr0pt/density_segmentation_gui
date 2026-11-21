@@ -34,8 +34,6 @@ def main():
     # Step 3) appears BELOW the navigation, not above it.
     with st.sidebar:
         
-        st.markdown('<div class="nav-header">Navigation</div>', unsafe_allow_html=True)
-        
         if st.button("🏠 Back to Main Menu", use_container_width=True):
             # Clear all session state except for completed work
             keys_to_keep = []

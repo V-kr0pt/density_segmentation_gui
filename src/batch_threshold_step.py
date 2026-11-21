@@ -300,9 +300,7 @@ def batch_threshold_step():
         st.session_state["batch_thresholds"][current_file_name] = st.session_state[f"input_{current_file_name}"]
 
     with st.sidebar:
-        st.markdown("---")
         st.markdown("### 🎯 Threshold")
-        st.markdown(f"**{current_file_name}**")
         threshold = st.number_input(
             "Threshold value",
             min_value=0.0,
@@ -316,8 +314,6 @@ def batch_threshold_step():
         )
         st.session_state["batch_thresholds"][current_file_name] = threshold
         st.caption("Lower value = more tissue included")
-
-        st.markdown("---")
 
         if st.button("💾 Save & Continue", type="primary", use_container_width=True):
             if "batch_final_thresholds" not in st.session_state:
