@@ -264,7 +264,7 @@ def _clear_draw_state():
         "affine", "original_image_path", "slice_index", "output_path",
         "original_shape", "current_batch_file", "img_type",
         "native_polygons", "completed_polygons_display",
-        "current_points", "last_click",
+        "current_points", "last_click", "canvas_generation",
         "_disp_cache_key", "_disp_img_rgb", "_disp_w", "_disp_h",
     ]
     for k in keys:
@@ -287,6 +287,7 @@ def _build_figure(img_rgb, completed_display, current_points, display_w, display
         height=display_h, width=display_w,
         margin=dict(l=0, r=0, t=0, b=0),
         coloraxis_showscale=False,
+        dragmode=False,
     )
     fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False, visible=False)
     fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False, visible=False)
@@ -348,8 +349,6 @@ def batch_draw_step():
     ]
 
     total_files = len(batch_files)
-    st.write(f"### Progress: {len(completed_draw)}/{total_files} files completed")
-    st.progress(len(completed_draw) / total_files)
 
     if current_index >= len(batch_files):
         completed_threshold = st.session_state["batch_completed_files"]["threshold"]
@@ -387,56 +386,9 @@ def batch_draw_step():
     #         st.session_state["current_step"] = "batch_threshold"
     #         st.rerun()
 
-    # ---- Jump-to dropdown ----
-    def _make_label(i, f):
-        name = f.split(".")[0]
-        return f"✅ {f}" if name in completed_draw else f"⬜ {f}"
-
-    dropdown_labels = [_make_label(i, f) for i, f in enumerate(batch_files)]
-    selected_label  = st.selectbox(
-        "Jump to file:",
-        dropdown_labels,
-        index=current_index,
-        key="draw_jump_dropdown",
-    )
-    jumped_index = dropdown_labels.index(selected_label)
-    if jumped_index != current_index:
-        st.session_state["batch_current_index"] = jumped_index
-        _clear_draw_state()
-        st.rerun()
-
-    current_index     = jumped_index
     current_file      = batch_files[current_index]
     current_file_name = current_file.split(".")[0]
-
-    # ---- Header with free Prev / Next navigation ----
-    is_completed = current_file_name in completed_draw
-
-    status_label = "✅ Saved" if is_completed else f"({current_index + 1}/{total_files})"
-    header_hint  = ("Viewing saved mask. Click Redraw to replace it."
-                    if is_completed else
-                    "Click the image to place vertices. Use the controls below to manage polygons.")
-
-    st.markdown(f"""
-    <div class="current-file">
-        <h4>{current_file} &nbsp; <span style="font-size:0.85rem;">{status_label}</span></h4>
-        <p>{header_hint}</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    col1, _mid, col3 = st.columns([1, 2, 1])
-    with col1:
-        if current_index > 0 and st.button("← Previous"):
-            st.session_state["batch_current_index"] = current_index - 1
-            _clear_draw_state()
-            st.rerun()
-    with col3:
-        if current_index + 1 < len(batch_files) and st.button("Next →"):
-            st.session_state["batch_current_index"] = current_index + 1
-            _clear_draw_state()
-            st.rerun()
-
-    st.divider()
+    is_completed      = current_file_name in completed_draw
 
     # ---- Shared: load original image ----
     input_folder = st.session_state.get(
@@ -601,47 +553,6 @@ def batch_draw_step():
         # Keep oriented shape in sync if the user flipped/rotated
         st.session_state["original_shape"] = oriented_shape
 
-    # ---- Orientation controls (callbacks do state mutation; keeps widget
-    #      keys authoritative and avoids "modify widget after creation" errors)
-    st.markdown("### Orientation")
-    ocol1, ocol2, ocol3, ocol4 = st.columns([1.3, 1, 1, 1])
-    with ocol1:
-        st.button(
-            "↻ Rotate 90° CW",
-            use_container_width=True,
-            key=f"rotbtn_{current_file_name}",
-            help="Rotate the image 90° clockwise. Any in-progress polygons will be cleared.",
-            on_click=_on_rotate_click,
-            args=(rot_key,),
-        )
-    with ocol2:
-        st.checkbox(
-            "Flip Horizontally",
-            key=fh_key,
-            on_change=_on_orient_widget_change,
-        )
-    with ocol3:
-        st.checkbox(
-            "Flip Vertically",
-            key=fv_key,
-            on_change=_on_orient_widget_change,
-        )
-    with ocol4:
-        st.button(
-            "Reset Orientation",
-            use_container_width=True,
-            key=f"resetbtn_{current_file_name}",
-            help="Clear rotation and flips for this file.",
-            on_click=_on_reset_click,
-            args=(rot_key, fh_key, fv_key),
-        )
-
-    st.caption(
-        f"Current: rotate={orient['rotate_k'] * 90}° CCW "
-        f"(={(4 - orient['rotate_k']) % 4 * 90}° CW)"
-        f" · flip H={orient['flip_h']} · flip V={orient['flip_v']}"
-    )
-
     if "display_transform" not in st.session_state:
         st.session_state["display_transform"] = DisplayTransform(padding=50)
     transform = st.session_state["display_transform"]
@@ -662,6 +573,7 @@ def batch_draw_step():
 
     fig = _build_figure(img_rgb, completed_display, current_points, display_w, display_h)
 
+    # Status caption
     if n_pts == 0 and n_done == 0:
         st.caption("Click anywhere on the image to start placing vertices.")
     elif n_pts > 0:
@@ -671,11 +583,10 @@ def batch_draw_step():
     else:
         st.caption(f"{n_done} polygon{'s' if n_done != 1 else ''} completed.")
 
+    # ---- Drawing Canvas ----
     st.markdown("### Drawing Canvas")
-
-    # Safe key: forward-slash and dots from nested DICOM paths would break
-    # Streamlit's widget key system on some versions
-    canvas_key = "canvas_" + current_file.replace("/", "_").replace("\\", "_").replace(".", "_")
+    gen = st.session_state.get("canvas_generation", 0)
+    canvas_key = "canvas_" + current_file.replace("/", "_").replace("\\", "_").replace(".", "_") + f"_g{gen}"
 
     clicked = plotly_events(
         fig,
@@ -697,10 +608,12 @@ def batch_draw_step():
             st.session_state["current_points"].append(new_click)
             st.rerun()
 
-    st.markdown("### Controls")
-    c1, c2, c3, c4 = st.columns(4)
-
-    with c1:
+    # ---- Drawing controls in the sidebar (below Current Step) ----
+    has_mask = "result" in st.session_state and "mask" in st.session_state
+    mask_area = int(np.count_nonzero(st.session_state["mask"])) if has_mask else 0
+    with st.sidebar:
+        st.markdown("---")
+        st.markdown("### ✏️ Draw Controls")
         if st.button("Close Polygon", disabled=n_pts < 3,
                      use_container_width=True,
                      help="Finalise the current polygon (needs >= 3 points)"):
@@ -711,14 +624,12 @@ def batch_draw_step():
             st.session_state["current_points"] = []
             st.rerun()
 
-    with c2:
         if st.button("Undo Last Point", disabled=n_pts == 0,
                      use_container_width=True,
                      help="Remove the most recently placed vertex"):
             st.session_state["current_points"].pop()
             st.rerun()
 
-    with c3:
         if st.button("Delete Last Polygon", disabled=n_done == 0,
                      use_container_width=True,
                      help="Remove the most recently closed polygon"):
@@ -726,94 +637,50 @@ def batch_draw_step():
             st.session_state["native_polygons"].pop()
             st.rerun()
 
-    with c4:
         if st.button("Clear All", use_container_width=True,
                      help="Delete all polygons and in-progress points"):
             st.session_state["current_points"]             = []
             st.session_state["completed_polygons_display"] = []
             st.session_state["native_polygons"]            = []
             st.session_state["last_click"]                 = None
+            st.session_state["canvas_generation"]          = st.session_state.get("canvas_generation", 0) + 1
             st.rerun()
 
-    st.divider()
+        st.markdown("---")
 
-    col_mask, col_back = st.columns(2)
+        if st.button("✅ Create Mask & Continue", disabled=n_done == 0,
+                     type="primary", use_container_width=True,
+                     help="Generate mask from closed polygons, save, and continue"):
+            # Build the mask inline (no separate Create Mask step needed)
+            valid = [p for p in st.session_state.get("native_polygons", []) if len(p) >= 3]
+            if valid:
+                with st.spinner("Saving mask…"):
+                    result, combined_mask = MaskManager.create_combined_mask(oriented_image, valid)
+                    mask_area_now = int(np.count_nonzero(combined_mask))
+                    if mask_area_now > 0:
+                        output_path_now = os.path.join(os.getcwd(), "output", current_file_name)
+                        if current_file_name not in st.session_state["batch_completed_files"]["draw"]:
+                            save_polygon_mask_dcm(
+                                mask_2d=combined_mask,
+                                output_path=output_path_now,
+                                source_image_path=st.session_state.get("original_image_path"),
+                            )
+                            _save_orientation_to_disk(output_path_now, orient)
+                            st.session_state["batch_completed_files"]["draw"].append(current_file_name)
+                            # Invalidate threshold step's display cache for this file
+                            if "mask_version" not in st.session_state:
+                                st.session_state["mask_version"] = {}
+                            st.session_state["mask_version"][current_file_name] =                                 st.session_state["mask_version"].get(current_file_name, 0) + 1
+                if mask_area_now == 0:
+                    st.error("Mask is empty — clear points and re-draw.")
+                else:
+                    st.session_state["batch_current_index"] = current_index
+                    st.session_state["draw_return_index"] = current_index + 1
+                    _clear_draw_state()
+                    st.toast(f"Mask saved for {current_file}!", icon="✅")
+                    st.session_state["current_step"] = "batch_threshold"
+                    st.rerun()
+            else:
+                st.warning("Close at least one polygon (>= 3 points) first.")
 
-    with col_mask:
-        if st.button("Create Mask", disabled=n_done == 0, type="primary",
-                     use_container_width=True,
-                     help="Generate the segmentation mask from all closed polygons"):
-            st.session_state["create_mask"] = True
 
-    with col_back:
-        if st.button("Back to File Selection", use_container_width=True):
-            st.session_state["current_step"] = "file_selection"
-            st.rerun()
-
-    if st.session_state.get("create_mask", False):
-        valid = [p for p in st.session_state.get("native_polygons", []) if len(p) >= 3]
-        if valid:
-            result, combined_mask = MaskManager.create_combined_mask(oriented_image, valid)
-            st.session_state["mask"]        = combined_mask
-            st.session_state["result"]      = result
-            st.session_state["output_path"] = os.path.join(
-                os.getcwd(), "output", current_file_name
-            )
-            st.session_state["create_mask"] = False
-            st.rerun()
-        else:
-            st.warning("Close at least one polygon (>= 3 points) before creating a mask.")
-            st.session_state["create_mask"] = False
-
-    if "result" in st.session_state and "mask" in st.session_state:
-        st.markdown("### Mask Preview")
-        col1, col2 = st.columns(2)
-
-        present_img    = transform.prepare_for_display(
-            oriented_image, img_type=st.session_state["img_type"]
-        )
-        present_result = transform.prepare_for_display(
-            st.session_state["result"], img_type=st.session_state["img_type"]
-        )
-
-        with col1:
-            st.image(present_img,    caption="Original Image", use_container_width=True)
-        with col2:
-            st.image(present_result, caption="Segmented Area", use_container_width=True)
-
-        mask_area = int(np.count_nonzero(st.session_state["mask"]))
-        if mask_area == 0:
-            st.error(
-                "The generated mask is empty (0 pixels). The polygon vertices "
-                "likely fell outside the image. Clear points and re-draw before saving."
-            )
-
-        _, col_save, _ = st.columns([1, 1, 1])
-        with col_save:
-            if st.button("Save Mask & Continue", type="primary", disabled=mask_area == 0):
-                if current_file_name not in st.session_state["batch_completed_files"]["draw"]:
-                    with st.spinner("Saving mask…"):
-                        # Fast path: save just the 2D polygon as a single-frame
-                        # RLE-compressed DICOM (~tens of KB). The 3D broadcast
-                        # is deferred to the processing step so drawing flow
-                        # stays responsive even for large DBT volumes.
-                        save_polygon_mask_dcm(
-                            mask_2d=st.session_state["mask"],
-                            output_path=st.session_state["output_path"],
-                            source_image_path=st.session_state.get(
-                                "original_image_path"
-                            ),
-                        )
-                        # Persist the orientation used for this file so the
-                        # threshold and process steps can re-apply it on load.
-                        _save_orientation_to_disk(
-                            st.session_state["output_path"], orient
-                        )
-                    st.session_state["batch_completed_files"]["draw"].append(current_file_name)
-                # Go threshold this file immediately, then return to draw for the next one.
-                st.session_state["batch_current_index"] = current_index
-                st.session_state["draw_return_index"] = current_index + 1
-                _clear_draw_state()
-                st.toast(f"Mask saved for {current_file}!", icon="✅")
-                st.session_state["current_step"] = "batch_threshold"
-                st.rerun()
