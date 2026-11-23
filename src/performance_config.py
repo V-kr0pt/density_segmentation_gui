@@ -31,7 +31,7 @@ class PerformanceConfig:
             return psutil.virtual_memory().available // (1024 * 1024)
         except ImportError:
             # Fallback if psutil is not available
-            return 4096  # Assume 4GB as default
+            return 8192  # Assume 8GB as default
     
     def get_optimal_workers(self, file_count: int = 1) -> int:
         """

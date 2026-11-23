@@ -1,7 +1,62 @@
 import os
 import streamlit as st
 import json
-from new_utils import resolve_dense_mask_path, resolve_final_mask_path
+from new_utils import resolve_final_mask_path, has_polygon_mask
+
+
+# =============================
+# Helpers
+# =============================
+def find_dicom_series_folders(input_folder):
+    """
+    Recursively find every folder that directly contains DICOM (.dcm / .dicom) files.
+    Returns paths relative to input_folder, using forward slashes on all platforms.
+    This handles arbitrarily nested structures, e.g.:
+        media/Patient_001/Series_CC/*.dcm
+        media/Series_001/*.dcm
+    """
+    result = []
+    for root, dirs, files in os.walk(input_folder):
+        if any(f.lower().endswith(('.dcm', '.dicom')) for f in files):
+            rel = os.path.relpath(root, input_folder).replace(os.sep, '/')
+            if rel != '.':          # skip input_folder itself
+                result.append(rel)
+    return result
+
+
+def scan_output_progress(output_folder):
+    """
+    Recursively walk the output folder and return three lists of relative paths
+    (using forward slashes) for cases that have completed each pipeline step.
+    Works for both flat layouts (output/scan1/) and nested layouts
+    (output/Patient_001/Series_CC/).
+    """
+    progress = {"draw": [], "threshold": [], "process": []}
+    if not os.path.exists(output_folder):
+        return progress
+
+    for root, dirs, files in os.walk(output_folder):
+        rel = os.path.relpath(root, output_folder).replace(os.sep, '/')
+        if rel == '.':
+            continue
+
+        if has_polygon_mask(root):
+            progress["draw"].append(rel)
+
+        threshold_json = os.path.join(root, "threshold.json")
+        if os.path.exists(threshold_json):
+            try:
+                with open(threshold_json, "r") as f:
+                    data = json.load(f)
+                    if "threshold" in data:
+                        progress["threshold"].append(rel)
+            except Exception:
+                pass   # handled with a warning below if needed
+
+        if resolve_final_mask_path(root) is not None:
+            progress["process"].append(rel)
+
+    return progress
 
 
 # =============================
@@ -49,32 +104,8 @@ def file_selection_step():
     if "batch_completed_files" not in st.session_state:
         st.session_state["batch_completed_files"] = {"draw": [], "threshold": [], "process": []}
 
-    # Track actual progress by checking output folder contents
-    actual_progress = {"draw": [], "threshold": [], "process": []}
-    if os.path.exists(output_folder):
-        for folder_name in os.listdir(output_folder):
-            folder_path = os.path.join(output_folder, folder_name)
-            if not os.path.isdir(folder_path):
-                continue
-
-            # Draw step: completed if dense mask exists (NIfTI or DICOM)
-            if resolve_dense_mask_path(folder_path) is not None:
-                actual_progress["draw"].append(folder_name)
-
-            # Threshold step: completed if threshold.json exists and contains 'threshold'
-            threshold_json = os.path.join(folder_path, "threshold.json")
-            if os.path.exists(threshold_json):
-                try:
-                    with open(threshold_json, "r") as f:
-                        data = json.load(f)
-                        if "threshold" in data:
-                            actual_progress["threshold"].append(folder_name)
-                except Exception as e:
-                    st.warning(f"Could not read threshold for {folder_name}: {e}")
-
-            # Process step: completed if final mask exists (NIfTI or DICOM)
-            if resolve_final_mask_path(folder_path) is not None:
-                actual_progress["process"].append(folder_name)
+    # Track actual progress by checking output folder contents (recursive)
+    actual_progress = scan_output_progress(output_folder)
 
     st.session_state["batch_completed_files"] = actual_progress
 
@@ -101,13 +132,8 @@ def file_selection_step():
     all_nii_files = [f for f in all_files_inside_input if (f.endswith('.nii') or f.endswith('.nii.gz'))]
     all_dicom_files = [f for f in all_files_inside_input if (f.endswith('.dcm') or f.endswith('.dicom'))]
 
-    # Check for folder inside the main media folder
-    all_dicom_folders = [f for f in all_files_inside_input if os.path.isdir(os.path.join(input_folder, f))]
-    # Only keep folders that contain .dicom or .dcm files
-    all_dicom_folders = [f for f in all_dicom_folders if any(
-        file.endswith('.dicom') or file.endswith('.dcm')
-        for file in os.listdir(os.path.join(input_folder, f))
-    )]
+    # Check for DICOM series folders at any depth inside the input folder
+    all_dicom_folders = find_dicom_series_folders(input_folder)
 
     available_files = all_nii_files + all_dicom_files + all_dicom_folders
 
@@ -139,7 +165,7 @@ def file_selection_step():
     selected_files = st.multiselect(
         "Select files to process:",
         available_files,
-        default=available_files if len(available_files) <= 20 else available_files[:20]
+        default=available_files if len(available_files) <= 300 else available_files[:300]
     )
 
     if len(selected_files) == 0:

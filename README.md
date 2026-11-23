@@ -7,7 +7,7 @@
 
 ## Project Overview
 
-Density Segmentation GUI is an interactive web-based tool for segmenting digital breast tomosynthesis (DBT) images. It builds on [Tamerlan Mustafaev's](https://github.com/RadioTamerlan) segmentation algorithm and provides an intuitive interface for selecting files, drawing masks, adjusting thresholds, and processing results
+Density Segmentation GUI is an interactive web-based tool for segmenting digital breast tomosynthesis (DBT) images. It builds on [Tamerlan Mustafaev's](https://github.com/RadioTamerlan) segmentation algorithm and provides an intuitive interface for selecting files, drawing masks, adjusting thresholds, and processing results. This project builds upon the Density Segmentation GUI (https://github.com/V-kr0pt/density_segmentation_gui) to provide more streamlined interface for the segmentation of DBT images.
 
 <p align="center">
   <img src="GUI_flowchart_v1.jpg" alt="GUI Flowchart" width="600">
@@ -36,48 +36,61 @@ The steps are slightly different for Windows and macOS/Linux:
 
 #### **For macOS/Linux:**
 ```bash
-git clone https://github.com/V-kr0pt/density_segmentation_gui.git
-cd density_segmentation_gui
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
+git clone https://github.com/tracy01014/Dense_tissue_mask_generation_tool.git
+cd Dense_tissue_mask_generation_tool
 
-If you have [uv](https://docs.astral.sh/uv/) installed, setup is even simpler:
-```bash
-git clone https://github.com/V-kr0pt/density_segmentation_gui.git
-cd density_segmentation_gui
-uv sync
+# Option 1: Using venv
+python -m venv segGUI
+source segGUI/bin/activate
+pip install -r requirements.txt
+
+# Option 2: Using Conda
+conda create -n segGUI python=3.10 -y
+conda activate segGUI
+pip install -r requirements.txt
 ```
 #### **For Windows (Command Prompt):**
 ```cmd
-git clone https://github.com/V-kr0pt/density_segmentation_gui.git
-cd density_segmentation_gui
-python -m venv venv
-venv\Scripts\activate
+git clone https://github.com/tracy01014/Dense_tissue_mask_generation_tool.git
+cd Dense_tissue_mask_generation_tool
+python -m venv segGUI
+segGUI\Scripts\activate
 pip install -r requirements.txt
 ```
 
 #### **For Windows (PowerShell):**
 ```powershell
-git clone https://github.com/V-kr0pt/density_segmentation_gui.git
-cd density_segmentation_gui
-python -m venv venv
-.\venv\Scripts\Activate.ps1
+git clone https://github.com/tracy01014/Dense_tissue_mask_generation_tool.git
+cd Dense_tissue_mask_generation_tool
+python -m venv segGUI
+.\segGUI\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
 ### 3. Launch the App
+#### Activate environment: **macOS/Linux**
+##### Option 1: Using venv
+```bash
+source segGUI/bin/activate
+```
+##### Option 2: Using Conda
+```bash
+conda activate segGUI
+```
+#### Activate environment: **Windows (Command Prompt)**
+```cmd
+segGUI\Scripts\activate
+```
 
-After activating your virtual environment, start the application:
+#### Activate environment: **Windows (PowerShell)**
+```powershell
+.\segGUI\Scripts\Activate.ps1
+```
+
+#### Start the App
 
 ```bash
 streamlit run src/app.py
-```
-
-Or to launch the app with uv:
-```bash
-uv run streamlit run src/app.py
 ```
 
 The app will open in your browser at [http://localhost:8501](http://localhost:8501).
@@ -162,12 +175,6 @@ A: Place your input files in the `media/` folder before starting the app.
 The application supports the following formats:
 - NIfTI: `.nii`, `.nii.gz`  
 - DICOM: `.dcm`, `.dicom`
-
-**Q: How do I start the app if I used uv?**  
-A: Instead of activating a virtual environment, just run:  
-```bash
-uv run streamlit run src/app.py
-```
 
 ---
 
